@@ -88,12 +88,10 @@ struct GroupDetailView: View {
                     model.select(items, false)
                     model.select(items.filter { $0.rule.risk == .safe }, true)
                 }
-                Button("Not Used in 30 Days") {
-                    let cutoff = Date.now.addingTimeInterval(-30 * 24 * 60 * 60)
-                    model.select(items, false)
-                    model.select(items.filter { ($0.lastModified ?? .distantFuture) < cutoff }, true)
-                }
-                .help("Select items not modified or used in the last 30 days")
+                Button("Not Used in 30 Days") { selectUnused(items, days: 30) }
+                    .help("Select items not modified or used in the last 30 days")
+                Button("Not Used in 6 Months") { selectUnused(items, days: 182) }
+                    .help("Select items not modified or used in the last 6 months")
                 Divider()
                 Button("All Shown") { model.select(items, true) }
                 Button("None") { model.select(items, false) }
@@ -103,6 +101,12 @@ struct GroupDetailView: View {
         .disabled(allItems.isEmpty || model.isBusy)
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    private func selectUnused(_ items: [CleanupItem], days: Double) {
+        let cutoff = Date.now.addingTimeInterval(-days * 24 * 60 * 60)
+        model.select(items, false)
+        model.select(items.filter { ($0.lastModified ?? .distantFuture) < cutoff }, true)
     }
 
     private func table(_ items: [CleanupItem], largest: Int64) -> some View {
@@ -146,7 +150,8 @@ struct GroupDetailView: View {
             }
             .width(min: 140, ideal: 160)
 
-            TableColumn("Modified", value: \.lastModifiedSortKey) { item in
+            // Large files carry Spotlight's last-opened date; everything else its modification date.
+            TableColumn(group == .largeFiles ? "Last Used" : "Modified", value: \.lastModifiedSortKey) { item in
                 if let date = item.lastModified {
                     Text(date, format: .relative(presentation: .named))
                         .foregroundStyle(.secondary)

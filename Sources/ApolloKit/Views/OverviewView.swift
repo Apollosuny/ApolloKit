@@ -75,7 +75,7 @@ private struct ScanStartView: View {
             VStack(spacing: 6) {
                 Text("Find what your Mac can let go of")
                     .font(.title2.weight(.semibold))
-                Text("Caches, Xcode and simulator data, package stores, toolchains, Docker and project build artifacts.")
+                Text("Caches, Xcode and simulator data, package stores, toolchains, Docker, project build artifacts and large forgotten files.")
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             }

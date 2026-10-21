@@ -7,6 +7,7 @@ public struct DiskScanner: Sendable {
     public let tools: ToolEnvironment
     /// Folders searched for installed apps when deciding whether app data is a leftover.
     public let applicationDirectories: [URL]
+    public let largeFileSearch: LargeFileSearch
 
     private static let ignoredEntryNames: Set<String> = [".DS_Store", ".localized"]
 
@@ -15,12 +16,14 @@ public struct DiskScanner: Sendable {
         catalog: [CleanupRule] = RuleCatalog.all,
         maximumConcurrentMeasurements: Int = max(2, ProcessInfo.processInfo.activeProcessorCount),
         tools: ToolEnvironment = .system,
-        applicationDirectories: [URL]? = nil
+        applicationDirectories: [URL]? = nil,
+        largeFileSearch: LargeFileSearch = LargeFileSearch()
     ) {
         self.homeDirectory = homeDirectory.standardizedFileURL
         self.catalog = catalog
         self.maximumConcurrentMeasurements = maximumConcurrentMeasurements
         self.tools = tools
+        self.largeFileSearch = largeFileSearch
         self.applicationDirectories = applicationDirectories ?? [
             URL(fileURLWithPath: "/Applications"),
             URL(fileURLWithPath: "/Applications/Setapp"),
@@ -57,6 +60,28 @@ public struct DiskScanner: Sendable {
             )
             located += await withTaskGroup(of: LocateResult.self) { group in
                 for root in projectRoots {
+                    group.addTask { finder.find(in: root, progress: progress) }
+                }
+                var results: [LocateResult] = []
+                for await result in group { results.append(result) }
+                return results
+            }
+        }
+        try Task.checkCancellation()
+
+        let largeFileBindings = enabledRules.flatMap { rule in
+            rule.locators.compactMap(\.largeFileExtensions).map { LargeFileBinding(extensions: $0, rule: rule) }
+        }
+        if !largeFileBindings.isEmpty {
+            let finder = LargeFileFinder(
+                bindings: largeFileBindings,
+                claimedExtensions: Set(catalog.flatMap(\.locators).compactMap(\.largeFileExtensions).joined()),
+                minimumBytes: largeFileSearch.minimumBytes,
+                excludedDirectories: projectRoots
+            )
+            let roots = largeFileSearch.homeRelativeRoots.map(resolve)
+            located += await withTaskGroup(of: LocateResult.self) { group in
+                for root in roots {
                     group.addTask { finder.find(in: root, progress: progress) }
                 }
                 var results: [LocateResult] = []
@@ -164,7 +189,7 @@ public struct DiskScanner: Sendable {
                         rule: rule,
                         displayName: "\(appName) (not installed) › \(url.lastPathComponent)"
                     ))
-                case .projectArtifact, .tool:
+                case .projectArtifact, .tool, .largeFile:
                     continue
                 }
             }
@@ -223,8 +248,16 @@ public struct DiskScanner: Sendable {
     }
 
     private static func measure(_ candidate: ScanCandidate) -> Measured {
-        let modified = try? candidate.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        var modified = try? candidate.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        if candidate.rule.group == .largeFiles {
+            modified = LargeFileFinder.lastUsedDate(of: candidate.url, modified: modified)
+        }
         return Measured(candidate: candidate, measurement: DirectorySizer.measure(candidate.url), lastModified: modified)
+    }
+
+    /// Large-file bundles are found before their size is known, so the threshold is applied after measuring.
+    private func minimumReportedBytes(for rule: CleanupRule) -> Int64 {
+        rule.group == .largeFiles ? largeFileSearch.minimumBytes : 1
     }
 
     private func measure(
@@ -253,7 +286,7 @@ public struct DiskScanner: Sendable {
                         isPermissionDenied: true
                     ))
                 }
-                if measurement.allocatedBytes > 0 {
+                if measurement.allocatedBytes >= minimumReportedBytes(for: measured.candidate.rule) {
                     progress(.discovered(group: measured.candidate.rule.group, bytes: measurement.allocatedBytes))
                     items.append(CleanupItem(
                         url: measured.candidate.url,

@@ -11,6 +11,7 @@ final class Preferences {
         static let knownRuleIDs = "knownRuleIDs"
         static let showsMenuBarExtra = "showsMenuBarExtra"
         static let showsFreeSpaceInMenuBar = "showsFreeSpaceInMenuBar"
+        static let largeFileMinimumBytes = "largeFileMinimumBytes"
     }
 
     /// Conventional folder names for source checkouts, matched case-insensitively against the home folder.
@@ -36,6 +37,10 @@ final class Preferences {
         didSet { defaults.set(showsFreeSpaceInMenuBar, forKey: Key.showsFreeSpaceInMenuBar) }
     }
 
+    var largeFileMinimumBytes: Int64 {
+        didSet { defaults.set(largeFileMinimumBytes, forKey: Key.largeFileMinimumBytes) }
+    }
+
     /// Read without an instance so the app delegate can decide whether closing the window quits the app.
     static func storedShowsMenuBarExtra(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: Key.showsMenuBarExtra) as? Bool ?? true
@@ -49,6 +54,8 @@ final class Preferences {
         self.defaults = defaults
         showsMenuBarExtra = Self.storedShowsMenuBarExtra(in: defaults)
         showsFreeSpaceInMenuBar = defaults.object(forKey: Key.showsFreeSpaceInMenuBar) as? Bool ?? true
+        largeFileMinimumBytes = (defaults.object(forKey: Key.largeFileMinimumBytes) as? NSNumber)?.int64Value
+            ?? LargeFileSearch.defaultMinimumBytes
         if let paths = defaults.stringArray(forKey: Key.projectRoots) {
             projectRoots = paths.map { URL(fileURLWithPath: $0, isDirectory: true) }
         } else {

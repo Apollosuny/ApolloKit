@@ -16,6 +16,7 @@ public enum RuleGroup: String, Sendable, CaseIterable, Identifiable {
     case editors
     case docker
     case projectArtifacts
+    case largeFiles
 
     public var id: String { rawValue }
 
@@ -29,6 +30,7 @@ public enum RuleGroup: String, Sendable, CaseIterable, Identifiable {
         case .editors: "Editors & Tooling"
         case .docker: "Docker"
         case .projectArtifacts: "Project Build Artifacts"
+        case .largeFiles: "Large & Old Files"
         }
     }
 
@@ -42,6 +44,7 @@ public enum RuleGroup: String, Sendable, CaseIterable, Identifiable {
         case .editors: "chevron.left.forwardslash.chevron.right"
         case .docker: "cube.box"
         case .projectArtifacts: "folder.badge.gearshape"
+        case .largeFiles: "archivebox"
         }
     }
 }
@@ -108,10 +111,16 @@ public enum RuleLocator: Sendable, Hashable {
     case leftover(homeRelativePath: String, appBundleNames: [String])
     /// Items discovered and removed through an external tool (simctl, docker).
     case tool(ToolSource)
+    /// Files at or above the large-file threshold in the user's document folders, matched by
+    /// lowercase extension. An empty set matches any file no other large-file rule claims.
+    case largeFile(extensions: Set<String>)
 
     public static func dir(_ path: String) -> RuleLocator { .directory(homeRelativePath: path) }
     public static func children(_ path: String, label: String? = nil) -> RuleLocator {
         .childrenOf(homeRelativePath: path, label: label)
+    }
+    public static func largeFiles(_ extensions: String...) -> RuleLocator {
+        .largeFile(extensions: Set(extensions))
     }
     public static func artifact(_ name: String, parent: [String] = [], content: [String] = []) -> RuleLocator {
         .projectArtifact(ArtifactPattern(directoryName: name, parentMarkers: parent, contentMarkers: content))
@@ -120,12 +129,17 @@ public enum RuleLocator: Sendable, Hashable {
     var homeRelativePath: String? {
         switch self {
         case .directory(let path), .childrenOf(let path, _), .leftover(let path, _): path
-        case .eachChild, .toolchainVersions, .projectArtifact, .tool: nil
+        case .eachChild, .toolchainVersions, .projectArtifact, .tool, .largeFile: nil
         }
     }
 
     var artifactPattern: ArtifactPattern? {
         if case .projectArtifact(let pattern) = self { return pattern }
+        return nil
+    }
+
+    var largeFileExtensions: Set<String>? {
+        if case .largeFile(let extensions) = self { return extensions }
         return nil
     }
 

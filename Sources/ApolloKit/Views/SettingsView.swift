@@ -98,6 +98,11 @@ private struct ScanLocationsSettings: View {
                 }
                 .disabled(highlighted.isEmpty)
             }
+
+            Divider()
+                .padding(.vertical, 6)
+
+            LargeFileSettings()
         }
         .padding(20)
     }
@@ -110,6 +115,26 @@ private struct ScanLocationsSettings: View {
         panel.prompt = "Add"
         if panel.runModal() == .OK {
             model.preferences.addProjectRoots(panel.urls)
+        }
+    }
+}
+
+private struct LargeFileSettings: View {
+    @Environment(AppModel.self) private var model
+
+    private static let thresholds: [Int64] = [50_000_000, 100_000_000, 250_000_000, 500_000_000, 1_000_000_000]
+
+    var body: some View {
+        @Bindable var preferences = model.preferences
+
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Large files at least", selection: $preferences.largeFileMinimumBytes) {
+                ForEach(Self.thresholds, id: \.self) { Text($0.fileSize).tag($0) }
+            }
+            .fixedSize()
+            Text("Searched in \(LargeFileSearch.defaultHomeRelativeRoots.map { "~/\($0)" }.formatted(.list(type: .and))). Git repositories, project folders and app bundles are skipped.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 }

@@ -118,7 +118,10 @@ final class AppModel {
         liveBytesByGroup = [:]
         scanFraction = nil
 
-        let scanner = DiskScanner(homeDirectory: homeDirectory)
+        let scanner = DiskScanner(
+            homeDirectory: homeDirectory,
+            largeFileSearch: LargeFileSearch(minimumBytes: preferences.largeFileMinimumBytes)
+        )
         let enabledRuleIDs = preferences.enabledRuleIDs
         let projectRoots = preferences.projectRoots
 

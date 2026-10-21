@@ -4,7 +4,7 @@ import Foundation
 /// a child of `~/Library/Caches` claimed by e.g. the Homebrew rule is never reported by the generic rule.
 public enum RuleCatalog {
     public static let all: [CleanupRule] =
-        system + apps + xcode + packageManagers + toolchains + editors + docker + projectArtifacts
+        system + apps + xcode + packageManagers + toolchains + editors + docker + projectArtifacts + largeFiles
 
     public static func rule(id: String) -> CleanupRule? {
         all.first { $0.id == id }
@@ -509,6 +509,48 @@ public enum RuleCatalog {
             detail: ".terraform provider plugins and modules. Restore with terraform init.",
             group: .projectArtifacts, risk: .caution,
             locators: [.artifact(".terraform", parent: [".terraform.lock.hcl", "main.tf"])]
+        ),
+    ]
+
+    // MARK: - Large & old files
+
+    private static let largeFileNote = "Your own files, so nothing is pre-selected. Files in iCloud-synced Desktop or Documents are removed from iCloud too."
+
+    static let largeFiles: [CleanupRule] = [
+        CleanupRule(
+            id: "files.installers", title: "Installers",
+            detail: "Disk images and installer packages (.dmg, .pkg), usually not needed once the app is installed. \(largeFileNote)",
+            group: .largeFiles, risk: .caution, locators: [.largeFiles("dmg", "pkg", "mpkg")]
+        ),
+        CleanupRule(
+            id: "files.archives", title: "Archives",
+            detail: "Compressed archives (.zip, .tar.gz, .7z, .rar), often already extracted. \(largeFileNote)",
+            group: .largeFiles, risk: .caution,
+            locators: [.largeFiles("zip", "tar", "gz", "tgz", "bz2", "tbz", "xz", "txz", "zst", "7z", "rar")]
+        ),
+        CleanupRule(
+            id: "files.videos", title: "Videos & Recordings",
+            detail: "Screen recordings and video files. \(largeFileNote)",
+            group: .largeFiles, risk: .caution,
+            locators: [.largeFiles("mov", "mp4", "m4v", "mkv", "avi", "webm", "wmv", "flv")]
+        ),
+        CleanupRule(
+            id: "files.virtualMachines", title: "Disk Images & Virtual Machines",
+            detail: "OS images and virtual machine bundles (.iso, .img, .utm, .vmwarevm, .pvm). \(largeFileNote)",
+            group: .largeFiles, risk: .caution,
+            locators: [.largeFiles(
+                "iso", "img", "vmdk", "vdi", "vhd", "vhdx", "qcow2", "sparseimage", "sparsebundle", "utm", "pvm", "vmwarevm"
+            )]
+        ),
+        CleanupRule(
+            id: "files.appBuilds", title: "App Builds",
+            detail: "Exported app builds and archives outside Xcode's folders (.ipa, .apk, .aab, .xcarchive). \(largeFileNote)",
+            group: .largeFiles, risk: .caution, locators: [.largeFiles("ipa", "apk", "aab", "xcarchive")]
+        ),
+        CleanupRule(
+            id: "files.other", title: "Other Large Files",
+            detail: "Any other file above the size threshold. \(largeFileNote)",
+            group: .largeFiles, risk: .caution, locators: [.largeFile(extensions: [])]
         ),
     ]
 }

@@ -12,6 +12,7 @@ extension RuleGroup {
         case .editors: .indigo
         case .docker: .cyan
         case .projectArtifacts: .green
+        case .largeFiles: .pink
         }
     }
 }
