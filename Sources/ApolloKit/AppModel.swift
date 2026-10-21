@@ -29,6 +29,7 @@ final class AppModel {
 
     let preferences = Preferences()
     let uninstaller = UninstallerModel()
+    let startupItems = StartupItemsModel()
     let notifier = Notifier()
 
     /// Opens the main window; set by any live SwiftUI view, since only views can reach `openWindow`.

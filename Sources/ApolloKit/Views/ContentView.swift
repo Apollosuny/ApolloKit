@@ -5,6 +5,15 @@ enum SidebarSelection: Hashable {
     case overview
     case group(RuleGroup)
     case uninstaller
+    case startupItems
+
+    /// Tools have their own review-and-remove flow, so the Smart Scan clean bar stays hidden there.
+    var showsCleanBar: Bool {
+        switch self {
+        case .overview, .group: true
+        case .uninstaller, .startupItems: false
+        }
+    }
 }
 
 struct ContentView: View {
@@ -28,11 +37,12 @@ struct ContentView: View {
                     GroupDetailView(group: group)
                 case .uninstaller:
                     UninstallerView()
+                case .startupItems:
+                    StartupItemsView()
                 }
             }
             .overlay(alignment: .bottom) {
-                // The uninstaller has its own review-and-remove flow.
-                if selection != .uninstaller {
+                if (selection ?? .overview).showsCleanBar {
                     CleanBar()
                 }
             }
@@ -100,6 +110,8 @@ struct SidebarView: View {
             Section("Tools") {
                 Label("Uninstaller", systemImage: "trash.square")
                     .tag(SidebarSelection.uninstaller)
+                Label("Startup Items", systemImage: "power.circle")
+                    .tag(SidebarSelection.startupItems)
             }
         }
     }
