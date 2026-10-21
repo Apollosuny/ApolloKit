@@ -30,6 +30,7 @@ final class AppModel {
     let preferences = Preferences()
     let uninstaller = UninstallerModel()
     let startupItems = StartupItemsModel()
+    let history = HistoryModel()
     let notifier = Notifier()
 
     /// Opens the main window; set by any live SwiftUI view, since only views can reach `openWindow`.
@@ -49,6 +50,7 @@ final class AppModel {
     init() {
         hidesWindowAtLaunch = preferences.startsInMenuBar && preferences.showsMenuBarExtra
         notifier.onOpen = { [weak self] in self?.showMainWindow() }
+        uninstaller.onUninstall = { [weak self] record in self?.history.record(record) }
         checkLowDiskSpace()
 
         // Keeps the menu bar's free-space readout current while the app sits in the background.
@@ -193,6 +195,7 @@ final class AppModel {
                     Task { @MainActor in self?.apply(progress) }
                 }
                 self.report = report
+                history.record(ScanSnapshot(report: report))
                 // Pre-select only items that tools regenerate on their own.
                 selectedItemIDs = Set(report.items.filter { $0.rule.risk == .safe }.map(\.id))
             } catch is CancellationError {
@@ -236,6 +239,7 @@ final class AppModel {
             report?.items.removeAll { handledIDs.contains($0.id) }
             selectedItemIDs.subtract(handledIDs)
             lastOutcome = outcome
+            history.record(CleanupRecord(source: .smartScan, removed: outcome.removed, movedToTrash: mode == .moveToTrash))
             showsCompletion = true
             cleaningItemName = nil
             diskSpace = DiskSpace.current()

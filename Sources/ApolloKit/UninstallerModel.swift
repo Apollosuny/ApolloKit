@@ -26,6 +26,8 @@ final class UninstallerModel {
     private(set) var isRemoving = false
     private(set) var lastResult: Result?
     private(set) var runningBundleIdentifiers: Set<String> = []
+    /// Called after every removal so the cleanup lands in the history.
+    @ObservationIgnored var onUninstall: ((CleanupRecord) -> Void)?
 
     @ObservationIgnored private let uninstaller = AppUninstaller()
     @ObservationIgnored private var sizeTask: Task<Void, Never>?
@@ -163,6 +165,7 @@ final class UninstallerModel {
 
         Task {
             let outcome = await cleaner.clean(items, mode: mode)
+            onUninstall?(CleanupRecord(source: .uninstaller, title: app.name, removed: outcome.removed, movedToTrash: mode == .moveToTrash))
             let handled = Set((outcome.removed + outcome.missing).map(\.id))
             lastResult = Result(
                 appName: app.name,
