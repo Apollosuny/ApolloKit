@@ -28,6 +28,7 @@ final class AppModel {
     private(set) var cleaningItemName: String?
 
     let preferences = Preferences()
+    let uninstaller = UninstallerModel()
 
     @ObservationIgnored private var activeTask: Task<Void, Never>?
     private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser

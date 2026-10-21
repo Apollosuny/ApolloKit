@@ -4,6 +4,7 @@ import SwiftUI
 enum SidebarSelection: Hashable {
     case overview
     case group(RuleGroup)
+    case uninstaller
 }
 
 struct ContentView: View {
@@ -23,10 +24,15 @@ struct ContentView: View {
                     OverviewView(selection: $selection)
                 case .group(let group):
                     GroupDetailView(group: group)
+                case .uninstaller:
+                    UninstallerView()
                 }
             }
             .overlay(alignment: .bottom) {
-                CleanBar()
+                // The uninstaller has its own review-and-remove flow.
+                if selection != .uninstaller {
+                    CleanBar()
+                }
             }
             .animation(.smooth, value: model.isBusy)
         }
@@ -81,6 +87,11 @@ struct SidebarView: View {
                     }
                     .tag(SidebarSelection.group(group))
                 }
+            }
+
+            Section("Tools") {
+                Label("Uninstaller", systemImage: "trash.square")
+                    .tag(SidebarSelection.uninstaller)
             }
         }
     }
