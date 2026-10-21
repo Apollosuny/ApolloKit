@@ -3,7 +3,8 @@ import Foundation
 /// Built-in cleanup rules. Specific rules take precedence over generic `childrenOf` rules:
 /// a child of `~/Library/Caches` claimed by e.g. the Homebrew rule is never reported by the generic rule.
 public enum RuleCatalog {
-    public static let all: [CleanupRule] = system + xcode + packageManagers + editors + docker + projectArtifacts
+    public static let all: [CleanupRule] =
+        system + apps + xcode + packageManagers + toolchains + editors + docker + projectArtifacts
 
     public static func rule(id: String) -> CleanupRule? {
         all.first { $0.id == id }
@@ -27,6 +28,86 @@ public enum RuleCatalog {
             detail: "Items already in the Trash. Always deleted permanently. Requires Full Disk Access.",
             group: .system, risk: .caution, locators: [.children(".Trash")],
             alwaysDeletePermanently: true
+        ),
+    ]
+
+    // MARK: - Browsers & apps
+
+    private static let chromiumBrowsers: [(path: String, label: String)] = [
+        ("Library/Application Support/Google/Chrome", "Chrome"),
+        ("Library/Application Support/Arc/User Data", "Arc"),
+        ("Library/Application Support/BraveSoftware/Brave-Browser", "Brave"),
+        ("Library/Application Support/Microsoft Edge", "Edge"),
+        ("Library/Application Support/Chromium", "Chromium"),
+        ("Library/Application Support/Vivaldi", "Vivaldi"),
+    ]
+
+    /// Electron apps keep Chromium caches next to their real data in Application Support.
+    private static let electronApps = [
+        "Slack", "discord", "Notion/Partitions/notion", "Postman", "Figma", "Microsoft Teams",
+        "Claude", "obsidian", "Linear", "Spotify", "WhatsApp",
+    ]
+
+    private static let chromiumCacheFolders = ["Cache", "Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache"]
+    private static let serviceWorkerCacheFolders = ["Service Worker/CacheStorage", "Service Worker/ScriptCache"]
+
+    static let apps: [CleanupRule] = [
+        CleanupRule(
+            id: "apps.browserCaches", title: "Browser Code & GPU Caches",
+            detail: "Per-profile compiled script and GPU shader caches of Chromium browsers.",
+            group: .apps, risk: .safe,
+            locators: chromiumBrowsers.map {
+                RuleLocator.eachChild(homeRelativePath: $0.path, subpaths: ["Code Cache", "GPUCache", "DawnGraphiteCache", "DawnWebGPUCache"], label: $0.label)
+            } + [.dir("Library/Application Support/Google/Chrome/component_crx_cache")]
+        ),
+        CleanupRule(
+            id: "apps.electronCaches", title: "Electron App Caches",
+            detail: "HTTP, script and GPU caches of Slack, Discord, Notion, Postman, Figma, Teams and similar apps.",
+            group: .apps, risk: .safe,
+            locators: electronApps.flatMap { app in
+                chromiumCacheFolders.map { RuleLocator.dir("Library/Application Support/\(app)/\($0)") }
+            }
+        ),
+        CleanupRule(
+            id: "apps.serviceWorkerCaches", title: "Service Worker Caches",
+            detail: "Offline caches of web apps in browsers and Electron apps. Pages may need to reload content; offline copies are lost.",
+            group: .apps, risk: .caution,
+            locators: chromiumBrowsers.map {
+                RuleLocator.eachChild(homeRelativePath: $0.path, subpaths: serviceWorkerCacheFolders, label: $0.label)
+            } + electronApps.flatMap { app in
+                serviceWorkerCacheFolders.map { RuleLocator.dir("Library/Application Support/\(app)/\($0)") }
+            }
+        ),
+        CleanupRule(
+            id: "apps.chromeOnDeviceModel", title: "Chrome On-Device AI Model",
+            detail: "Gemini Nano model used by Chrome's built-in AI features. Re-downloaded when a feature needs it.",
+            group: .apps, risk: .caution,
+            locators: [.dir("Library/Application Support/Google/Chrome/OptGuideOnDeviceModel")]
+        ),
+        CleanupRule(
+            id: "apps.leftovers", title: "Leftovers of Removed Apps",
+            detail: "Data of developer apps that are no longer installed (OrbStack, Docker Desktop, Android Studio).",
+            group: .apps, risk: .caution,
+            locators: [
+                .leftover(homeRelativePath: "Library/Group Containers/HUAQ24HBR6.dev.orbstack", appBundleNames: ["OrbStack.app"]),
+                .leftover(homeRelativePath: ".orbstack", appBundleNames: ["OrbStack.app"]),
+                .leftover(homeRelativePath: "Library/Containers/com.docker.docker", appBundleNames: ["Docker.app"]),
+                .leftover(homeRelativePath: "Library/Group Containers/group.com.docker", appBundleNames: ["Docker.app"]),
+                .leftover(homeRelativePath: "Library/Application Support/Google/AndroidStudio", appBundleNames: ["Android Studio.app"]),
+            ]
+        ),
+        CleanupRule(
+            id: "apps.iosSoftwareUpdates", title: "iOS Software Updates",
+            detail: "Firmware files downloaded by Finder when updating or restoring devices.",
+            group: .apps, risk: .safe,
+            locators: [.dir("Library/iTunes/iPhone Software Updates"), .dir("Library/iTunes/iPad Software Updates")]
+        ),
+        CleanupRule(
+            id: "apps.iosBackups", title: "iPhone & iPad Backups",
+            detail: "Local device backups made by Finder. They may be the only copy of a device's data. Requires Full Disk Access.",
+            group: .apps, risk: .caution,
+            locators: [.children("Library/Application Support/MobileSync/Backup")],
+            enabledByDefault: false
         ),
     ]
 
@@ -69,6 +150,21 @@ public enum RuleCatalog {
             id: "xcode.unavailableSimulators", title: "Unavailable Simulators",
             detail: "Simulator devices whose runtime is no longer installed. Removed with simctl delete.",
             group: .xcode, risk: .safe, locators: [.tool(.unavailableSimulators)]
+        ),
+        CleanupRule(
+            id: "xcode.simulatorDeviceData", title: "Simulator Device Data",
+            detail: "Apps and data inside shut-down simulators. Erased with simctl erase; the device stays in Xcode, reset to factory state.",
+            group: .xcode, risk: .caution, locators: [.tool(.simulatorDeviceData)]
+        ),
+        CleanupRule(
+            id: "xcode.testDevices", title: "XCTest Device Clones",
+            detail: "Simulator clones created for parallel testing. Xcode recreates them on the next test run.",
+            group: .xcode, risk: .safe, locators: [.children("Library/Developer/XCTestDevices")]
+        ),
+        CleanupRule(
+            id: "xcode.deviceLogs", title: "Device Logs",
+            detail: "Logs and crash reports copied from connected devices.",
+            group: .xcode, risk: .safe, locators: [.dir("Library/Developer/Xcode/iOS Device Logs")]
         ),
         CleanupRule(
             id: "xcode.simulatorRuntimes", title: "Simulator Runtimes",
@@ -129,7 +225,11 @@ public enum RuleCatalog {
         CleanupRule(
             id: "pkg.gradleWrapper", title: "Gradle Wrapper Distributions",
             detail: "Downloaded Gradle versions, re-downloaded per project when needed.",
-            group: .packageManagers, risk: .caution, locators: [.children(".gradle/wrapper/dists")]
+            group: .packageManagers, risk: .caution, locators: [.children(".gradle/wrapper/dists", label: "Gradle")]
+        ),
+        CleanupRule(
+            id: "pkg.gradleDaemon", title: "Gradle Daemon Logs", detail: "Daemon logs and registries in ~/.gradle/daemon.",
+            group: .packageManagers, risk: .safe, locators: [.dir(".gradle/daemon")]
         ),
         CleanupRule(
             id: "pkg.maven", title: "Maven Repository", detail: "Local Maven repository (~/.m2/repository).",
@@ -172,6 +272,19 @@ public enum RuleCatalog {
             ]
         ),
         CleanupRule(
+            id: "pkg.nuget", title: "NuGet Packages", detail: ".NET global packages folder. Restored by dotnet restore.",
+            group: .packageManagers, risk: .safe, locators: [.dir(".nuget/packages")]
+        ),
+        CleanupRule(
+            id: "pkg.cocoapodsRepos", title: "CocoaPods Spec Repos", detail: "Cloned spec repositories in ~/.cocoapods/repos.",
+            group: .packageManagers, risk: .safe, locators: [.dir(".cocoapods/repos")]
+        ),
+        CleanupRule(
+            id: "pkg.xdgCache", title: "Other CLI Caches",
+            detail: "Per-tool caches in ~/.cache (Prisma, pre-commit, Solana, corepack, …). Tools rebuild them on demand.",
+            group: .packageManagers, risk: .safe, locators: [.children(".cache")]
+        ),
+        CleanupRule(
             id: "pkg.browsers", title: "Test Browser Binaries",
             detail: "Playwright, Puppeteer and Cypress browser downloads.",
             group: .packageManagers, risk: .caution,
@@ -179,14 +292,54 @@ public enum RuleCatalog {
         ),
     ]
 
+    // MARK: - Toolchains & models
+
+    static let toolchains: [CleanupRule] = [
+        CleanupRule(
+            id: "toolchain.rust", title: "Rust Toolchains",
+            detail: "Installed rustup toolchains. The default toolchain is never listed; pinned projects reinstall theirs.",
+            group: .toolchains, risk: .caution, locators: [.toolchainVersions(.rustup)]
+        ),
+        CleanupRule(
+            id: "toolchain.node", title: "Node.js Versions (nvm)",
+            detail: "Node versions installed with nvm. The default version is never listed.",
+            group: .toolchains, risk: .caution, locators: [.toolchainVersions(.nvm)]
+        ),
+        CleanupRule(
+            id: "toolchain.python", title: "Python Versions (pyenv)",
+            detail: "Python versions installed with pyenv. The global version is never listed; virtualenvs built on a removed version break.",
+            group: .toolchains, risk: .caution, locators: [.toolchainVersions(.pyenv)]
+        ),
+        CleanupRule(
+            id: "toolchain.ruby", title: "Ruby Versions (rbenv)",
+            detail: "Ruby versions installed with rbenv. The global version is never listed.",
+            group: .toolchains, risk: .caution, locators: [.toolchainVersions(.rbenv)]
+        ),
+        CleanupRule(
+            id: "toolchain.androidSDK", title: "Android System Images & NDKs",
+            detail: "Emulator system images and NDK versions. Reinstall from Android Studio's SDK Manager.",
+            group: .toolchains, risk: .caution,
+            locators: [
+                .children("Library/Android/sdk/system-images", label: "System image"),
+                .children("Library/Android/sdk/ndk", label: "NDK"),
+            ]
+        ),
+        CleanupRule(
+            id: "toolchain.aiModels", title: "Local AI Models",
+            detail: "Downloaded models for Hugging Face, Ollama and LM Studio. Large to download again.",
+            group: .toolchains, risk: .caution,
+            locators: [.dir(".cache/huggingface"), .dir(".ollama/models"), .dir(".lmstudio/models"), .dir(".cache/lm-studio")]
+        ),
+    ]
+
     // MARK: - Editors & tooling
 
     static let editors: [CleanupRule] = [
         CleanupRule(
-            id: "editor.vscode", title: "VS Code & Cursor Caches",
+            id: "editor.vscode", title: "VS Code-based Editor Caches",
             detail: "Electron caches, cached extension packages and logs.",
             group: .editors, risk: .safe,
-            locators: ["Code", "Cursor"].flatMap { app in
+            locators: ["Code", "Cursor", "Windsurf", "VSCodium", "Antigravity IDE"].flatMap { app in
                 ["Cache", "CachedData", "CachedExtensionVSIXs", "Code Cache", "GPUCache", "logs"]
                     .map { RuleLocator.dir("Library/Application Support/\(app)/\($0)") }
             }
@@ -204,7 +357,7 @@ public enum RuleCatalog {
         CleanupRule(
             id: "editor.androidAVD", title: "Android Emulators",
             detail: "Android Virtual Devices. Removing one deletes the emulator and its data.",
-            group: .editors, risk: .caution, locators: [.children(".android/avd")],
+            group: .editors, risk: .caution, locators: [.children(".android/avd", label: "AVD")],
             enabledByDefault: false
         ),
     ]
@@ -252,8 +405,9 @@ public enum RuleCatalog {
             id: "project.jsBuildCaches", title: "JS Framework Caches",
             detail: "Next.js, Nuxt, Turborepo, Parcel, SvelteKit and Angular build caches.",
             group: .projectArtifacts, risk: .safe,
-            locators: [".next", ".nuxt", ".turbo", ".parcel-cache", ".svelte-kit", ".angular"]
+            locators: [".next", ".nuxt", ".output", ".turbo", ".parcel-cache", ".svelte-kit", ".angular", ".expo", ".docusaurus", ".cache"]
                 .map { RuleLocator.artifact($0, parent: nodeMarkers) }
+                + [.artifact(".nx", parent: ["nx.json"])]
         ),
         CleanupRule(
             id: "project.swiftBuild", title: "SwiftPM .build",
@@ -283,7 +437,7 @@ public enum RuleCatalog {
             id: "project.gradleBuild", title: "Gradle build",
             detail: "Gradle/Android build output and project caches.",
             group: .projectArtifacts, risk: .safe,
-            locators: [.artifact("build", parent: gradleMarkers), .artifact(".gradle", parent: gradleMarkers)]
+            locators: ["build", ".gradle", ".cxx", ".externalNativeBuild"].map { RuleLocator.artifact($0, parent: gradleMarkers) }
         ),
         CleanupRule(
             id: "project.flutter", title: "Flutter / Dart build",
@@ -300,6 +454,8 @@ public enum RuleCatalog {
                 .artifact(".pytest_cache", content: ["CACHEDIR.TAG", "README.md"]),
                 .artifact(".mypy_cache", content: ["CACHEDIR.TAG"]),
                 .artifact(".ruff_cache", content: ["CACHEDIR.TAG"]),
+                .artifact(".tox", parent: ["tox.ini", "pyproject.toml"]),
+                .artifact(".nox", parent: ["noxfile.py"]),
             ]
         ),
         CleanupRule(
@@ -319,6 +475,34 @@ public enum RuleCatalog {
             detail: "Zig compiler caches.",
             group: .projectArtifacts, risk: .safe,
             locators: [.artifact(".zig-cache", parent: ["build.zig"]), .artifact("zig-cache", parent: ["build.zig"])]
+        ),
+        CleanupRule(
+            id: "project.dotnet", title: ".NET bin & obj",
+            detail: "MSBuild output of .NET projects. Rebuilt by dotnet build.",
+            group: .projectArtifacts, risk: .safe,
+            locators: ["bin", "obj"].map { RuleLocator.artifact($0, parent: ["*.csproj", "*.fsproj", "*.vbproj"]) }
+        ),
+        CleanupRule(
+            id: "project.haskell", title: "Haskell Build Output",
+            detail: "Stack .stack-work and Cabal dist-newstyle directories.",
+            group: .projectArtifacts, risk: .safe,
+            locators: [.artifact(".stack-work", parent: ["stack.yaml"]), .artifact("dist-newstyle", parent: ["cabal.project", "*.cabal"])]
+        ),
+        CleanupRule(
+            id: "project.elm", title: "Elm elm-stuff",
+            detail: "Elm compiler output.",
+            group: .projectArtifacts, risk: .safe,
+            locators: [.artifact("elm-stuff", parent: ["elm.json"])]
+        ),
+        CleanupRule(
+            id: "project.cloudBuild", title: "Cloud Deploy Artifacts",
+            detail: "AWS CDK cdk.out, Serverless .serverless and Cloudflare .wrangler build output.",
+            group: .projectArtifacts, risk: .safe,
+            locators: [
+                .artifact("cdk.out", parent: ["cdk.json"]),
+                .artifact(".serverless", parent: ["serverless.yml", "serverless.yaml", "serverless.ts"]),
+                .artifact(".wrangler", parent: ["wrangler.toml", "wrangler.json", "wrangler.jsonc"]),
+            ]
         ),
         CleanupRule(
             id: "project.terraform", title: "Terraform Providers",

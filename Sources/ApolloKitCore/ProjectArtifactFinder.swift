@@ -3,6 +3,7 @@ import Foundation
 struct ScanCandidate: Sendable {
     let url: URL
     let rule: CleanupRule
+    var displayName: String? = nil
 }
 
 struct LocateResult: Sendable {

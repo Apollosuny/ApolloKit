@@ -36,6 +36,12 @@ struct GroupDetailView: View {
                 model.select(items, false)
                 model.select(items.filter { $0.rule.risk == .safe }, true)
             }
+            Button("Select Older Than 30 Days") {
+                let cutoff = Date.now.addingTimeInterval(-30 * 24 * 60 * 60)
+                model.select(items, false)
+                model.select(items.filter { ($0.lastModified ?? .distantFuture) < cutoff }, true)
+            }
+            .help("Select items not modified or used in the last 30 days")
             Button("Select All") { model.select(items, true) }
             Button("Deselect All") { model.select(items, false) }
         }

@@ -5,6 +5,8 @@ public struct DiskScanner: Sendable {
     public let catalog: [CleanupRule]
     public let maximumConcurrentMeasurements: Int
     public let tools: ToolEnvironment
+    /// Folders searched for installed apps when deciding whether app data is a leftover.
+    public let applicationDirectories: [URL]
 
     private static let ignoredEntryNames: Set<String> = [".DS_Store", ".localized"]
 
@@ -12,12 +14,18 @@ public struct DiskScanner: Sendable {
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
         catalog: [CleanupRule] = RuleCatalog.all,
         maximumConcurrentMeasurements: Int = max(2, ProcessInfo.processInfo.activeProcessorCount),
-        tools: ToolEnvironment = .system
+        tools: ToolEnvironment = .system,
+        applicationDirectories: [URL]? = nil
     ) {
         self.homeDirectory = homeDirectory.standardizedFileURL
         self.catalog = catalog
         self.maximumConcurrentMeasurements = maximumConcurrentMeasurements
         self.tools = tools
+        self.applicationDirectories = applicationDirectories ?? [
+            URL(fileURLWithPath: "/Applications"),
+            URL(fileURLWithPath: "/Applications/Setapp"),
+            homeDirectory.appendingPathComponent("Applications"),
+        ]
     }
 
     public func scan(
@@ -104,26 +112,106 @@ public struct DiskScanner: Sendable {
                 case .directory(let path):
                     let url = resolve(path)
                     if (try? fileManager.attributesOfItem(atPath: url.path)) != nil {
-                        result.candidates.append(ScanCandidate(url: url, rule: rule))
+                        result.candidates.append(ScanCandidate(url: url, rule: rule, displayName: Self.displayName(forHomeRelativePath: path)))
                     }
-                case .childrenOf(let path):
+                case .childrenOf(let path, let label):
                     let parent = resolve(path)
                     guard (try? fileManager.attributesOfItem(atPath: parent.path)) != nil else { continue }
                     do {
                         let children = try fileManager.contentsOfDirectory(at: parent, includingPropertiesForKeys: nil)
                         for child in children
                         where !Self.ignoredEntryNames.contains(child.lastPathComponent) && !isClaimed(child, claimed: claimed) {
-                            result.candidates.append(ScanCandidate(url: child.standardizedFileURL, rule: rule))
+                            let name = Self.simulatorDeviceName(in: child) ?? child.lastPathComponent
+                            result.candidates.append(ScanCandidate(
+                                url: child.standardizedFileURL,
+                                rule: rule,
+                                displayName: label.map { "\($0) \(name)" } ?? name
+                            ))
                         }
                     } catch {
                         result.issues.append(ScanIssue(url: parent, error: error))
                     }
+                case .eachChild(let path, let subpaths, let label):
+                    for child in directoryChildren(of: resolve(path), into: &result) {
+                        for subpath in subpaths {
+                            let url = child.appendingPathComponent(subpath).standardizedFileURL
+                            guard (try? fileManager.attributesOfItem(atPath: url.path)) != nil else { continue }
+                            let name = ([label, child.lastPathComponent] + subpath.split(separator: "/").map(String.init))
+                                .joined(separator: " › ")
+                            result.candidates.append(ScanCandidate(url: url, rule: rule, displayName: name))
+                        }
+                    }
+                case .toolchainVersions(let manager):
+                    let versions = directoryChildren(of: resolve(manager.versionsHomeRelativePath), into: &result)
+                    let protected = manager.protectedVersions(
+                        installed: versions.map(\.lastPathComponent),
+                        homeDirectory: homeDirectory
+                    )
+                    for version in versions where !protected.contains(version.lastPathComponent) {
+                        result.candidates.append(ScanCandidate(
+                            url: version.standardizedFileURL,
+                            rule: rule,
+                            displayName: "\(manager.rawValue) \(version.lastPathComponent)"
+                        ))
+                    }
+                case .leftover(let path, let appBundleNames):
+                    let url = resolve(path)
+                    guard (try? fileManager.attributesOfItem(atPath: url.path)) != nil,
+                          !isAnyAppInstalled(appBundleNames) else { continue }
+                    let appName = appBundleNames.first.map { ($0 as NSString).deletingPathExtension } ?? "App"
+                    result.candidates.append(ScanCandidate(
+                        url: url,
+                        rule: rule,
+                        displayName: "\(appName) (not installed) › \(url.lastPathComponent)"
+                    ))
                 case .projectArtifact, .tool:
                     continue
                 }
             }
         }
         return result
+    }
+
+    private static let displayPrefixesToDrop = ["Library/Application Support/", "Library/Caches/", "Library/Developer/", "Library/"]
+
+    /// `Library/Application Support/Notion/Partitions/notion/Cache` → `Notion › Partitions › notion › Cache`
+    static func displayName(forHomeRelativePath path: String) -> String {
+        let trimmed = displayPrefixesToDrop.first { path.hasPrefix($0) }.map { String(path.dropFirst($0.count)) } ?? path
+        return trimmed.split(separator: "/").joined(separator: " › ")
+    }
+
+    /// Simulator device folders (including XCTest clones) are named by UDID; `device.plist` holds the readable name.
+    static func simulatorDeviceName(in directory: URL) -> String? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("device.plist")),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let name = plist["name"] as? String else {
+            return nil
+        }
+        return "\(name) · \(directory.lastPathComponent.prefix(8))"
+    }
+
+    /// Non-hidden child directories, ignoring symlinks (e.g. `rustup toolchain link`).
+    private func directoryChildren(of parent: URL, into result: inout LocateResult) -> [URL] {
+        guard (try? FileManager.default.attributesOfItem(atPath: parent.path)) != nil else { return [] }
+        do {
+            return try FileManager.default.contentsOfDirectory(
+                at: parent,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ).filter {
+                let values = try? $0.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+                return values?.isDirectory == true && values?.isSymbolicLink != true
+            }
+        } catch {
+            result.issues.append(ScanIssue(url: parent, error: error))
+            return []
+        }
+    }
+
+    private func isAnyAppInstalled(_ bundleNames: [String]) -> Bool {
+        bundleNames.contains { name in
+            applicationDirectories.contains { FileManager.default.fileExists(atPath: $0.appendingPathComponent(name).path) }
+        }
     }
 
     // MARK: - Measurement
@@ -170,7 +258,8 @@ public struct DiskScanner: Sendable {
                         url: measured.candidate.url,
                         rule: measured.candidate.rule,
                         sizeInBytes: measurement.allocatedBytes,
-                        lastModified: measured.lastModified
+                        lastModified: measured.lastModified,
+                        displayName: measured.candidate.displayName
                     ))
                 }
 

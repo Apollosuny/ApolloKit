@@ -9,8 +9,10 @@ public enum RiskLevel: String, Sendable, CaseIterable {
 
 public enum RuleGroup: String, Sendable, CaseIterable, Identifiable {
     case system
+    case apps
     case xcode
     case packageManagers
+    case toolchains
     case editors
     case docker
     case projectArtifacts
@@ -19,9 +21,11 @@ public enum RuleGroup: String, Sendable, CaseIterable, Identifiable {
 
     public var title: String {
         switch self {
-        case .system: "System & Apps"
+        case .system: "System"
+        case .apps: "Browsers & Apps"
         case .xcode: "Xcode & Simulators"
         case .packageManagers: "Package Managers"
+        case .toolchains: "Toolchains & Models"
         case .editors: "Editors & Tooling"
         case .docker: "Docker"
         case .projectArtifacts: "Project Build Artifacts"
@@ -31,8 +35,10 @@ public enum RuleGroup: String, Sendable, CaseIterable, Identifiable {
     public var symbolName: String {
         switch self {
         case .system: "gearshape"
+        case .apps: "macwindow"
         case .xcode: "hammer"
         case .packageManagers: "shippingbox"
+        case .toolchains: "wrench.and.screwdriver"
         case .editors: "chevron.left.forwardslash.chevron.right"
         case .docker: "cube.box"
         case .projectArtifacts: "folder.badge.gearshape"
@@ -47,6 +53,7 @@ public enum RuleGroup: String, Sendable, CaseIterable, Identifiable {
 public struct ArtifactPattern: Sendable, Hashable {
     public let directoryName: String
     /// At least one of these must exist next to the directory (e.g. `package.json` for `node_modules`).
+    /// A `*.ext` marker matches any file with that extension (e.g. `*.csproj`).
     public let parentMarkers: [String]
     /// At least one of these must exist inside the directory (e.g. `pyvenv.cfg` for `.venv`).
     public let contentMarkers: [String]
@@ -62,15 +69,26 @@ public struct ArtifactPattern: Sendable, Hashable {
     public func matches(_ directory: URL, fileManager: FileManager = .default) -> Bool {
         guard directory.lastPathComponent == directoryName else { return false }
         let parent = directory.deletingLastPathComponent()
-        if !parentMarkers.isEmpty,
-           !parentMarkers.contains(where: { fileManager.fileExists(atPath: parent.appendingPathComponent($0).path) }) {
+        if !parentMarkers.isEmpty, !Self.containsAnyMarker(parentMarkers, in: parent, fileManager: fileManager) {
             return false
         }
-        if !contentMarkers.isEmpty,
-           !contentMarkers.contains(where: { fileManager.fileExists(atPath: directory.appendingPathComponent($0).path) }) {
+        if !contentMarkers.isEmpty, !Self.containsAnyMarker(contentMarkers, in: directory, fileManager: fileManager) {
             return false
         }
         return true
+    }
+
+    private static func containsAnyMarker(_ markers: [String], in directory: URL, fileManager: FileManager) -> Bool {
+        let exactMarkers = markers.filter { !$0.hasPrefix("*.") }
+        if exactMarkers.contains(where: { fileManager.fileExists(atPath: directory.appendingPathComponent($0).path) }) {
+            return true
+        }
+        let extensionMarkers = markers.filter { $0.hasPrefix("*.") }.map { String($0.dropFirst(1)) }
+        guard !extensionMarkers.isEmpty,
+              let entries = try? fileManager.contentsOfDirectory(atPath: directory.path) else {
+            return false
+        }
+        return entries.contains { entry in extensionMarkers.contains { entry.hasSuffix($0) } }
     }
 }
 
@@ -78,22 +96,31 @@ public enum RuleLocator: Sendable, Hashable {
     /// The directory itself is a single cleanup item. Path is relative to the home directory.
     case directory(homeRelativePath: String)
     /// Each direct child becomes its own cleanup item. Path is relative to the home directory.
-    case childrenOf(homeRelativePath: String)
+    /// `label` prefixes each child's display name when the bare folder name is ambiguous (e.g. NDK versions).
+    case childrenOf(homeRelativePath: String, label: String?)
     /// Directories matching the pattern anywhere under the configured project roots.
     case projectArtifact(ArtifactPattern)
+    /// For every child folder of the path (e.g. each browser profile), each existing subpath is one item.
+    case eachChild(homeRelativePath: String, subpaths: [String], label: String)
+    /// Installed versions of a toolchain manager; the active version is never reported.
+    case toolchainVersions(ToolchainManager)
+    /// Data left behind by an app; only reported when none of the app bundles is installed.
+    case leftover(homeRelativePath: String, appBundleNames: [String])
     /// Items discovered and removed through an external tool (simctl, docker).
     case tool(ToolSource)
 
     public static func dir(_ path: String) -> RuleLocator { .directory(homeRelativePath: path) }
-    public static func children(_ path: String) -> RuleLocator { .childrenOf(homeRelativePath: path) }
+    public static func children(_ path: String, label: String? = nil) -> RuleLocator {
+        .childrenOf(homeRelativePath: path, label: label)
+    }
     public static func artifact(_ name: String, parent: [String] = [], content: [String] = []) -> RuleLocator {
         .projectArtifact(ArtifactPattern(directoryName: name, parentMarkers: parent, contentMarkers: content))
     }
 
     var homeRelativePath: String? {
         switch self {
-        case .directory(let path), .childrenOf(let path): path
-        case .projectArtifact, .tool: nil
+        case .directory(let path), .childrenOf(let path, _), .leftover(let path, _): path
+        case .eachChild, .toolchainVersions, .projectArtifact, .tool: nil
         }
     }
 
@@ -176,14 +203,14 @@ public struct CleanupItem: Sendable, Hashable, Identifiable {
     }
 
     /// A file-system item removed by moving it to the Trash or deleting it.
-    public init(url: URL, rule: CleanupRule, sizeInBytes: Int64, lastModified: Date?) {
-        let displayName = rule.group == .projectArtifacts
+    public init(url: URL, rule: CleanupRule, sizeInBytes: Int64, lastModified: Date?, displayName: String? = nil) {
+        let defaultName = rule.group == .projectArtifacts
             ? "\(url.deletingLastPathComponent().lastPathComponent)/\(url.lastPathComponent)"
             : url.lastPathComponent
         self.init(
             id: url.path,
             rule: rule,
-            displayName: displayName,
+            displayName: displayName ?? defaultName,
             url: url,
             action: .removeItem(url),
             sizeInBytes: sizeInBytes,

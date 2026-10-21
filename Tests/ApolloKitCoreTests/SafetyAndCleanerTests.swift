@@ -107,7 +107,10 @@ import Testing
     }
 
     @Test func genericArtifactNamesRequireMarkers() {
-        let generic: Set<String> = ["build", "target", "deps", "_build", "venv", "env", "dist", "vendor", ".gradle", ".build", "Pods"]
+        let generic: Set<String> = [
+            "build", "target", "deps", "_build", "venv", "env", "dist", "vendor", ".gradle", ".build", "Pods",
+            "bin", "obj", ".cache", ".output", ".tox", ".expo",
+        ]
         let patterns = RuleCatalog.all.flatMap(\.locators).compactMap(\.artifactPattern)
         for pattern in patterns where generic.contains(pattern.directoryName) {
             #expect(pattern.hasMarkers, "\(pattern.directoryName) must be confirmed by marker files")

@@ -4,6 +4,8 @@ import Foundation
 /// simulator runtimes live in system-managed disk images and Docker data lives inside its VM disk.
 public enum ToolSource: Sendable, Hashable {
     case unavailableSimulators
+    /// Content of shut-down simulators; erasing keeps the device but resets it to factory state.
+    case simulatorDeviceData
     case simulatorRuntimes
     case docker(DockerResource)
 }
@@ -67,7 +69,7 @@ struct ToolScanner: Sendable {
         var dockerBindings: [(DockerResource, CleanupRule)] = []
         for binding in bindings {
             switch binding.source {
-            case .unavailableSimulators, .simulatorRuntimes:
+            case .unavailableSimulators, .simulatorDeviceData, .simulatorRuntimes:
                 simulatorBindings.append(binding)
             case .docker(let resource):
                 dockerBindings.append((resource, binding.rule))
@@ -81,6 +83,7 @@ struct ToolScanner: Sendable {
             for binding in simulatorBindings {
                 switch binding.source {
                 case .unavailableSimulators: result.merge(await simulators.unavailableDevices(rule: binding.rule))
+                case .simulatorDeviceData: result.merge(await simulators.deviceData(rule: binding.rule))
                 case .simulatorRuntimes: result.merge(await simulators.runtimes(rule: binding.rule))
                 case .docker: break
                 }
@@ -108,7 +111,15 @@ struct SimulatorToolProvider: Sendable {
         let udid: String
         let name: String
         let dataPath: String?
+        let state: String?
+        let lastBootedAt: String?
     }
+
+    /// simctl SDK names per runtime platform, used to flag the runtime the selected Xcode builds against.
+    private static let simulatorSDKs = [
+        "iOS": "iphonesimulator", "watchOS": "watchsimulator", "tvOS": "appletvsimulator",
+        "xrOS": "xrsimulator", "visionOS": "xrsimulator",
+    ]
 
     private struct Runtime: Decodable {
         let identifier: String
@@ -150,18 +161,58 @@ struct SimulatorToolProvider: Sendable {
         return result
     }
 
+    func deviceData(rule: CleanupRule) async -> ToolLocateResult {
+        var result = ToolLocateResult()
+        guard let data = await runSimctl(["list", "devices", "available", "--json"], into: &result) else { return result }
+        do {
+            let list = try JSONDecoder().decode(DeviceList.self, from: data)
+            for (runtimeIdentifier, devices) in list.devices {
+                // Erasing requires a shut-down device; booted ones are in active use anyway.
+                for device in devices where device.state == "Shutdown" {
+                    guard let dataPath = device.dataPath else { continue }
+                    let deviceDirectory = URL(fileURLWithPath: dataPath).deletingLastPathComponent()
+                    let size = DirectorySizer.measure(deviceDirectory).allocatedBytes
+                    guard size > 0 else { continue }
+                    result.items.append(CleanupItem(
+                        id: "simctl.erase.\(device.udid)",
+                        rule: rule,
+                        displayName: "\(device.name) (\(Self.runtimeName(runtimeIdentifier)))",
+                        url: deviceDirectory,
+                        action: .runTool(simctl(["erase", device.udid])),
+                        sizeInBytes: size,
+                        lastModified: device.lastBootedAt.flatMap { try? Date($0, strategy: .iso8601) }
+                    ))
+                }
+            }
+        } catch {
+            result.issues.append(ScanIssue(subject: "Simulators", message: "Unexpected simctl output: \(error.localizedDescription)"))
+        }
+        return result
+    }
+
     func runtimes(rule: CleanupRule) async -> ToolLocateResult {
         var result = ToolLocateResult()
         guard let data = await runSimctl(["runtime", "list", "--json"], into: &result) else { return result }
         do {
             let runtimes = try JSONDecoder().decode([String: Runtime].self, from: data)
-            for runtime in runtimes.values where runtime.deletable == true {
+            let deletable = runtimes.values.filter { $0.deletable == true && ($0.sizeBytes ?? 0) > 0 }
+            let platforms = Set(deletable.compactMap { $0.runtimeIdentifier.map(Self.platformName) })
+            var activeSDKVersions: [String: String] = [:]
+            for platform in platforms {
+                activeSDKVersions[platform] = await activeSDKVersion(for: platform)
+            }
+
+            for runtime in deletable {
                 let size = runtime.sizeBytes ?? 0
-                guard size > 0 else { continue }
+                let platform = runtime.runtimeIdentifier.map(Self.platformName) ?? "Runtime"
+                let isUsedByXcode = activeSDKVersions[platform].map {
+                    Self.majorMinor(runtime.version ?? "") == Self.majorMinor($0)
+                } ?? false
                 let name = [
-                    runtime.runtimeIdentifier.map(Self.platformName) ?? "Runtime",
+                    platform,
                     runtime.version,
                     runtime.build.map { "(\($0))" },
+                    isUsedByXcode ? "— used by current Xcode" : nil,
                 ].compactMap { $0 }.joined(separator: " ")
                 result.items.append(CleanupItem(
                     id: "simctl.runtime.\(runtime.identifier)",
@@ -177,6 +228,19 @@ struct SimulatorToolProvider: Sendable {
             result.issues.append(ScanIssue(subject: "Simulator runtimes", message: "Unexpected simctl output: \(error.localizedDescription)"))
         }
         return result
+    }
+
+    private func activeSDKVersion(for platform: String) async -> String? {
+        guard let sdk = Self.simulatorSDKs[platform] else { return nil }
+        let invocation = ToolInvocation(executable: xcrun, arguments: ["--sdk", sdk, "--show-sdk-version"])
+        guard let output = try? await runner.run(invocation, timeout: 15), output.exitCode == 0 else { return nil }
+        let version = String(decoding: output.standardOutput, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        return version.isEmpty ? nil : version
+    }
+
+    /// `26.3.1` → `26.3`
+    static func majorMinor(_ version: String) -> String {
+        version.split(separator: ".").prefix(2).joined(separator: ".")
     }
 
     private func simctl(_ arguments: [String]) -> ToolInvocation {

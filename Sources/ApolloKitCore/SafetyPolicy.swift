@@ -17,7 +17,9 @@ public struct SafetyPolicy: Sendable {
 
     private static let protectedHomeRelativePaths = [
         "Library", "Library/Caches", "Library/Logs", "Library/Developer", "Library/Developer/Xcode",
-        "Library/Application Support", "Library/Containers", "Library/Mobile Documents",
+        "Library/Application Support", "Library/Containers", "Library/Group Containers", "Library/Mobile Documents",
+        "Library/Application Support/MobileSync", "Library/Android", "Library/Android/sdk",
+        ".cache", ".rustup", ".rustup/toolchains", ".nvm", ".pyenv", ".rbenv", ".gradle", ".docker",
         "Documents", "Desktop", "Downloads", "Pictures", "Movies", "Music", "Applications",
         ".Trash", ".ssh", ".gnupg", ".config", ".aws", ".kube",
     ]
