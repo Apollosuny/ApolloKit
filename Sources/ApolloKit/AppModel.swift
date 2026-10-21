@@ -17,6 +17,15 @@ final class AppModel {
     private(set) var lastOutcome: CleanupOutcome?
     var selectedItemIDs: Set<CleanupItem.ID> = []
     var errorMessage: String?
+    /// The completion screen is shown after a cleanup until the user moves on.
+    var showsCompletion = false
+
+    private(set) var diskSpace = DiskSpace.current()
+    /// Reclaimable bytes found so far, streamed while a scan runs.
+    private(set) var liveBytesByGroup: [RuleGroup: Int64] = [:]
+    /// Determinate progress once the scan is measuring; `nil` while it is still locating items.
+    private(set) var scanFraction: Double?
+    private(set) var cleaningItemName: String?
 
     let preferences = Preferences()
 
@@ -41,6 +50,21 @@ final class AppModel {
 
     var selectedBytes: Int64 {
         selectedItems.reduce(0) { $0 + $1.sizeInBytes }
+    }
+
+    var liveTotalBytes: Int64 {
+        liveBytesByGroup.values.reduce(0, +)
+    }
+
+    /// Groups with findings, largest first.
+    var groupsWithFindings: [RuleGroup] {
+        RuleGroup.allCases
+            .filter { totalBytes(in: $0) > 0 }
+            .sorted { totalBytes(in: $0) > totalBytes(in: $1) }
+    }
+
+    func selectedBytes(in group: RuleGroup) -> Int64 {
+        items(in: group).filter { selectedItemIDs.contains($0.id) }.reduce(0) { $0 + $1.sizeInBytes }
     }
 
     var permissionIssueCount: Int {
@@ -75,6 +99,9 @@ final class AppModel {
         guard !isBusy else { return }
         phase = .scanning(status: "Preparing…")
         lastOutcome = nil
+        showsCompletion = false
+        liveBytesByGroup = [:]
+        scanFraction = nil
 
         let scanner = DiskScanner(homeDirectory: homeDirectory)
         let enabledRuleIDs = preferences.enabledRuleIDs
@@ -93,6 +120,7 @@ final class AppModel {
             } catch {
                 errorMessage = error.localizedDescription
             }
+            diskSpace = DiskSpace.current()
             phase = .idle
             activeTask = nil
         }
@@ -108,18 +136,24 @@ final class AppModel {
             additionalAllowedRoots: preferences.projectRoots
         ))
         phase = .cleaning(completed: 0, total: items.count)
+        cleaningItemName = items.first?.displayName
+        let itemNames = items.map(\.displayName)
 
         activeTask = Task {
             let outcome = await cleaner.clean(items, mode: mode) { [weak self] completed, total in
                 Task { @MainActor in
                     guard let self, case .cleaning = self.phase else { return }
                     self.phase = .cleaning(completed: completed, total: total)
+                    self.cleaningItemName = completed < itemNames.count ? itemNames[completed] : nil
                 }
             }
             let handledIDs = Set((outcome.removed + outcome.missing).map(\.id))
             report?.items.removeAll { handledIDs.contains($0.id) }
             selectedItemIDs.subtract(handledIDs)
             lastOutcome = outcome
+            showsCompletion = true
+            cleaningItemName = nil
+            diskSpace = DiskSpace.current()
             phase = .idle
             activeTask = nil
         }
@@ -149,8 +183,29 @@ final class AppModel {
         case .walking(let directory, let visited):
             phase = .scanning(status: "Walking projects (\(visited.formatted()) folders) · \(directory)")
         case .measuring(let completed, let total):
-            phase = .scanning(status: "Measuring \(completed)/\(total)…")
+            phase = .scanning(status: "Measuring \(completed) of \(total) items…")
+            scanFraction = total > 0 ? Double(completed) / Double(total) : nil
+        case .discovered(let group, let bytes):
+            liveBytesByGroup[group, default: 0] += bytes
         }
+    }
+}
+
+struct DiskSpace: Equatable {
+    let totalBytes: Int64
+    let availableBytes: Int64
+
+    var usedBytes: Int64 { max(0, totalBytes - availableBytes) }
+
+    static func current() -> DiskSpace? {
+        let values = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [
+            .volumeTotalCapacityKey, .volumeAvailableCapacityForImportantUsageKey,
+        ])
+        guard let total = values?.volumeTotalCapacity,
+              let available = values?.volumeAvailableCapacityForImportantUsage else {
+            return nil
+        }
+        return DiskSpace(totalBytes: Int64(total), availableBytes: available)
     }
 }
 

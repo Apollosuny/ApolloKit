@@ -270,6 +270,8 @@ public enum ScanProgress: Sendable, Equatable {
     case locating(ruleTitle: String)
     case walking(directory: String, visited: Int)
     case measuring(completed: Int, total: Int)
+    /// Emitted once per reported item so the UI can show reclaimable space while the scan runs.
+    case discovered(group: RuleGroup, bytes: Int64)
 }
 
 enum FileErrorClassifier {

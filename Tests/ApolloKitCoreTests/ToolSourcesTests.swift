@@ -197,3 +197,42 @@ private func rule(_ id: String) throws -> CleanupRule {
         #expect(try rule("docker.volumes").enabledByDefault == false)
     }
 }
+
+@Suite struct ScanProgressTests {
+    private final class Recorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var events: [ScanProgress] = []
+        func record(_ event: ScanProgress) { lock.withLock { events.append(event) } }
+        var discoveredBytes: [RuleGroup: Int64] {
+            lock.withLock {
+                events.reduce(into: [:]) { totals, event in
+                    if case .discovered(let group, let bytes) = event { totals[group, default: 0] += bytes }
+                }
+            }
+        }
+    }
+
+    @Test func discoveredEventsAddUpToTheReport() async throws {
+        let tree = try TemporaryTree()
+        try tree.file("Library/Caches/com.example/a", bytes: 50_000)
+        try tree.file("Workspace/web/package.json")
+        try tree.file("Workspace/web/node_modules/x.js", bytes: 20_000)
+        let runner = FakeToolRunner([
+            ["system", "df", "--format", "{{json .}}"]: ToolOutput(exitCode: 0, standardOutput: Data(#"{"Reclaimable":"1GB","Type":"Build Cache"}"#.utf8)),
+        ])
+        let recorder = Recorder()
+
+        let report = try await DiskScanner(
+            homeDirectory: tree.root,
+            tools: ToolEnvironment(runner: runner, xcrun: nil, docker: URL(fileURLWithPath: "/usr/local/bin/docker"))
+        ).scan(
+            enabledRuleIDs: ["system.userCaches", "project.nodeModules", "docker.buildCache"],
+            projectRoots: [tree.url("Workspace")],
+            progress: { recorder.record($0) }
+        )
+
+        let expected = Dictionary(grouping: report.items, by: \.rule.group).mapValues { $0.reduce(0) { $0 + $1.sizeInBytes } }
+        #expect(recorder.discoveredBytes == expected)
+        #expect(Set(expected.keys) == [.system, .projectArtifacts, .docker])
+    }
+}

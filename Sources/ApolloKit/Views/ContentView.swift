@@ -25,9 +25,14 @@ struct ContentView: View {
                     GroupDetailView(group: group)
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
+            .overlay(alignment: .bottom) {
                 CleanBar()
             }
+            .animation(.smooth, value: model.isBusy)
+        }
+        .onChange(of: model.isBusy) { _, isBusy in
+            // Scan and clean progress live on the Smart Scan screen.
+            if isBusy { selection = .overview }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -57,16 +62,18 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $selection) {
-            Label("Overview", systemImage: "gauge.with.dots.needle.67percent")
+            Label("Smart Scan", systemImage: "sparkle.magnifyingglass")
                 .tag(SidebarSelection.overview)
 
             Section("Categories") {
                 ForEach(RuleGroup.allCases) { group in
-                    HStack {
-                        Label(group.title, systemImage: group.symbolName)
+                    HStack(spacing: 8) {
+                        GroupIcon(group: group, size: 20)
+                        Text(group.title)
+                            .lineLimit(1)
                         Spacer()
                         if model.report != nil {
-                            Text(model.totalBytes(in: group).formatted(.byteCount(style: .file)))
+                            Text(model.totalBytes(in: group).fileSize)
                                 .font(.callout)
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)

@@ -93,6 +93,9 @@ struct ToolScanner: Sendable {
             progress(.locating(ruleTitle: "Docker"))
             result.merge(await DockerToolProvider(docker: docker, runner: tools.runner).items(for: dockerBindings))
         }
+        for item in result.items {
+            progress(.discovered(group: item.rule.group, bytes: item.sizeInBytes))
+        }
         return result
     }
 }

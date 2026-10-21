@@ -254,6 +254,7 @@ public struct DiskScanner: Sendable {
                     ))
                 }
                 if measurement.allocatedBytes > 0 {
+                    progress(.discovered(group: measured.candidate.rule.group, bytes: measurement.allocatedBytes))
                     items.append(CleanupItem(
                         url: measured.candidate.url,
                         rule: measured.candidate.rule,
