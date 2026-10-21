@@ -29,6 +29,16 @@ final class AppModel {
 
     let preferences = Preferences()
     let uninstaller = UninstallerModel()
+    let notifier = Notifier()
+
+    /// Opens the main window; set by any live SwiftUI view, since only views can reach `openWindow`.
+    @ObservationIgnored var openMainWindow: (() -> Void)?
+    /// Set once at launch when the app should start in the menu bar without its window.
+    @ObservationIgnored private(set) var hidesWindowAtLaunch = false
+    @ObservationIgnored private var wasDiskSpaceLow = false
+    @ObservationIgnored private var pendingLowSpaceAlert = false
+    /// A background scan keeps the user on their current screen.
+    private(set) var isBackgroundScan = false
 
     @ObservationIgnored private var activeTask: Task<Void, Never>?
     private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
@@ -36,6 +46,10 @@ final class AppModel {
     var isBusy: Bool { phase != .idle }
 
     init() {
+        hidesWindowAtLaunch = preferences.startsInMenuBar && preferences.showsMenuBarExtra
+        notifier.onOpen = { [weak self] in self?.showMainWindow() }
+        checkLowDiskSpace()
+
         // Keeps the menu bar's free-space readout current while the app sits in the background.
         Task { [weak self] in
             while !Task.isCancelled {
@@ -48,6 +62,51 @@ final class AppModel {
 
     func refreshDiskSpace() {
         diskSpace = DiskSpace.current()
+        checkLowDiskSpace()
+    }
+
+    var isDiskSpaceLow: Bool {
+        guard let diskSpace else { return false }
+        return LowSpaceAlertPolicy(thresholdBytes: preferences.lowDiskSpaceThresholdBytes)
+            .isLow(availableBytes: diskSpace.availableBytes)
+    }
+
+    func consumeHideWindowAtLaunch() -> Bool {
+        defer { hidesWindowAtLaunch = false }
+        return hidesWindowAtLaunch
+    }
+
+    func showMainWindow() {
+        AppActivation.bringToFront()
+        openMainWindow?()
+    }
+
+    private func checkLowDiskSpace() {
+        guard let diskSpace else { return }
+        let policy = LowSpaceAlertPolicy(thresholdBytes: preferences.lowDiskSpaceThresholdBytes)
+        defer { wasDiskSpaceLow = policy.isLow(availableBytes: diskSpace.availableBytes) }
+        guard preferences.warnsWhenDiskSpaceLow,
+              policy.shouldAlert(availableBytes: diskSpace.availableBytes, wasLow: wasDiskSpaceLow, lastAlertAt: preferences.lastLowSpaceAlertAt)
+        else { return }
+
+        preferences.lastLowSpaceAlertAt = .now
+        let reportIsStale = report.map { Date.now.timeIntervalSince($0.finishedAt) > 6 * 60 * 60 } ?? true
+        if preferences.scansWhenDiskSpaceLow, reportIsStale, !isBusy {
+            // The alert goes out when the scan finishes, with an estimate of what can be cleaned.
+            pendingLowSpaceAlert = true
+            startScan(inBackground: true)
+        } else {
+            postLowSpaceAlert()
+        }
+    }
+
+    private func postLowSpaceAlert() {
+        guard let available = diskSpace?.availableBytes else { return }
+        let reclaimable = report.map { report in
+            report.items.filter { $0.rule.risk == .safe }.reduce(0) { $0 + $1.sizeInBytes }
+        }
+        let notifier = notifier
+        Task { await notifier.postLowSpace(availableBytes: available, reclaimableBytes: reclaimable) }
     }
 
     // MARK: - Derived state
@@ -111,8 +170,9 @@ final class AppModel {
 
     // MARK: - Actions
 
-    func startScan() {
+    func startScan(inBackground: Bool = false) {
         guard !isBusy else { return }
+        isBackgroundScan = inBackground
         phase = .scanning(status: "Preparing…")
         lastOutcome = nil
         showsCompletion = false
@@ -141,7 +201,12 @@ final class AppModel {
             }
             diskSpace = DiskSpace.current()
             phase = .idle
+            isBackgroundScan = false
             activeTask = nil
+            if pendingLowSpaceAlert {
+                pendingLowSpaceAlert = false
+                postLowSpaceAlert()
+            }
         }
     }
 
@@ -216,8 +281,6 @@ struct DiskSpace: Equatable {
 
     var usedBytes: Int64 { max(0, totalBytes - availableBytes) }
     var usedFraction: Double { totalBytes > 0 ? Double(usedBytes) / Double(totalBytes) : 0 }
-    /// Under 10% free, macOS starts purging caches and updates may fail to install.
-    var isLow: Bool { availableBytes < totalBytes / 10 }
 
     static func current() -> DiskSpace? {
         let values = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [

@@ -21,7 +21,7 @@ struct MenuBarLabel: View {
         case .cleaning: return "sparkles"
         case .idle:
             guard let disk = model.diskSpace else { return "internaldrive" }
-            if disk.isLow { return "exclamationmark.triangle.fill" }
+            if model.isDiskSpaceLow { return "exclamationmark.triangle.fill" }
             switch disk.usedFraction {
             case ..<0.2: return "gauge.with.dots.needle.0percent"
             case ..<0.42: return "gauge.with.dots.needle.33percent"
@@ -66,7 +66,10 @@ struct MenuBarPanel: View {
         }
         .padding(14)
         .frame(width: 290)
-        .onAppear { model.refreshDiskSpace() }
+        .onAppear {
+            model.refreshDiskSpace()
+            model.openMainWindow = { [openWindow] in openWindow(id: ApolloKitApp.mainWindowID) }
+        }
     }
 
     private func diskSection(_ disk: DiskSpace) -> some View {
@@ -75,14 +78,14 @@ struct MenuBarPanel: View {
                 Text("\(disk.availableBytes.fileSize) free")
                     .font(.headline)
                     .monospacedDigit()
-                    .foregroundStyle(disk.isLow ? Color.orange : .primary)
+                    .foregroundStyle(model.isDiskSpaceLow ? Color.orange : .primary)
                 Spacer()
                 Text("of \(disk.totalBytes.fileSize)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             ProgressView(value: disk.usedFraction)
-                .tint(disk.isLow ? .orange : .accentColor)
+                .tint(model.isDiskSpaceLow ? .orange : .accentColor)
         }
     }
 
@@ -241,7 +244,7 @@ struct MenuBarPanel: View {
     }
 
     private func showMainWindow() {
-        AppActivation.bringToFront()
-        openWindow(id: ApolloKitApp.mainWindowID)
+        model.openMainWindow = { [openWindow] in openWindow(id: ApolloKitApp.mainWindowID) }
+        model.showMainWindow()
     }
 }

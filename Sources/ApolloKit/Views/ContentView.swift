@@ -10,6 +10,8 @@ enum SidebarSelection: Hashable {
 struct ContentView: View {
     @Environment(AppModel.self) private var model
     @State private var selection: SidebarSelection? = .overview
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         @Bindable var model = model
@@ -37,8 +39,14 @@ struct ContentView: View {
             .animation(.smooth, value: model.isBusy)
         }
         .onChange(of: model.isBusy) { _, isBusy in
-            // Scan and clean progress live on the Smart Scan screen.
-            if isBusy { selection = .overview }
+            // Scan and clean progress live on the Smart Scan screen; a background scan leaves the user where they are.
+            if isBusy, !model.isBackgroundScan { selection = .overview }
+        }
+        .onAppear {
+            model.openMainWindow = { [openWindow] in openWindow(id: ApolloKitApp.mainWindowID) }
+            if model.consumeHideWindowAtLaunch() {
+                dismissWindow(id: ApolloKitApp.mainWindowID)
+            }
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

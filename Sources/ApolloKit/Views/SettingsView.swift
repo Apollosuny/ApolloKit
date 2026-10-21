@@ -30,12 +30,16 @@ private struct GeneralSettings: View {
                 Toggle("Show ApolloKit in the menu bar", isOn: $preferences.showsMenuBarExtra)
                 Toggle("Show free space next to the icon", isOn: $preferences.showsFreeSpaceInMenuBar)
                     .disabled(!preferences.showsMenuBarExtra)
+                Toggle("Start in the menu bar without opening the window", isOn: $preferences.startsInMenuBar)
+                    .disabled(!preferences.showsMenuBarExtra)
             } header: {
                 Text("Menu Bar")
             } footer: {
                 Text("When the window is closed, ApolloKit keeps running in the menu bar and leaves the Dock.")
                     .foregroundStyle(.secondary)
             }
+
+            LowSpaceSettings()
 
             Section("Startup") {
                 Toggle("Launch at login", isOn: Binding(
@@ -71,6 +75,48 @@ private struct GeneralSettings: View {
             launchAtLoginError = "Could not update login item: \(error.localizedDescription)"
         }
         launchAtLoginStatus = SMAppService.mainApp.status
+    }
+}
+
+private struct LowSpaceSettings: View {
+    @Environment(AppModel.self) private var model
+    @State private var authorization: Notifier.Authorization?
+
+    private static let thresholds: [Int64] = [10_000_000_000, 20_000_000_000, 50_000_000_000, 100_000_000_000]
+
+    var body: some View {
+        @Bindable var preferences = model.preferences
+
+        Section {
+            Toggle("Warn when free space is low", isOn: $preferences.warnsWhenDiskSpaceLow)
+                .onChange(of: preferences.warnsWhenDiskSpaceLow) { _, warns in
+                    if warns { Task { await model.notifier.requestAuthorization(); await refresh() } }
+                }
+            Picker("Warn below", selection: $preferences.lowDiskSpaceThresholdBytes) {
+                ForEach(Self.thresholds, id: \.self) { Text($0.fileSize).tag($0) }
+            }
+            .disabled(!preferences.warnsWhenDiskSpaceLow)
+            Toggle("Scan in the background to estimate what can be cleaned", isOn: $preferences.scansWhenDiskSpaceLow)
+                .disabled(!preferences.warnsWhenDiskSpaceLow)
+            if preferences.warnsWhenDiskSpaceLow, authorization == .denied {
+                HStack {
+                    Text("Notifications are turned off for ApolloKit.")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Open Notification Settings") { model.notifier.openNotificationSettings() }
+                }
+            }
+        } header: {
+            Text("Low Disk Space")
+        } footer: {
+            Text("At most one warning a day. The menu bar icon turns into a warning sign below this threshold.")
+                .foregroundStyle(.secondary)
+        }
+        .task { await refresh() }
+    }
+
+    private func refresh() async {
+        authorization = await model.notifier.authorization()
     }
 }
 

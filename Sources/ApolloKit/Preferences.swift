@@ -12,6 +12,11 @@ final class Preferences {
         static let showsMenuBarExtra = "showsMenuBarExtra"
         static let showsFreeSpaceInMenuBar = "showsFreeSpaceInMenuBar"
         static let largeFileMinimumBytes = "largeFileMinimumBytes"
+        static let startsInMenuBar = "startsInMenuBar"
+        static let warnsWhenDiskSpaceLow = "warnsWhenDiskSpaceLow"
+        static let lowDiskSpaceThresholdBytes = "lowDiskSpaceThresholdBytes"
+        static let scansWhenDiskSpaceLow = "scansWhenDiskSpaceLow"
+        static let lastLowSpaceAlertAt = "lastLowSpaceAlertAt"
     }
 
     /// Conventional folder names for source checkouts, matched case-insensitively against the home folder.
@@ -41,6 +46,26 @@ final class Preferences {
         didSet { defaults.set(largeFileMinimumBytes, forKey: Key.largeFileMinimumBytes) }
     }
 
+    var startsInMenuBar: Bool {
+        didSet { defaults.set(startsInMenuBar, forKey: Key.startsInMenuBar) }
+    }
+
+    var warnsWhenDiskSpaceLow: Bool {
+        didSet { defaults.set(warnsWhenDiskSpaceLow, forKey: Key.warnsWhenDiskSpaceLow) }
+    }
+
+    var lowDiskSpaceThresholdBytes: Int64 {
+        didSet { defaults.set(lowDiskSpaceThresholdBytes, forKey: Key.lowDiskSpaceThresholdBytes) }
+    }
+
+    var scansWhenDiskSpaceLow: Bool {
+        didSet { defaults.set(scansWhenDiskSpaceLow, forKey: Key.scansWhenDiskSpaceLow) }
+    }
+
+    var lastLowSpaceAlertAt: Date? {
+        didSet { defaults.set(lastLowSpaceAlertAt, forKey: Key.lastLowSpaceAlertAt) }
+    }
+
     /// Read without an instance so the app delegate can decide whether closing the window quits the app.
     static func storedShowsMenuBarExtra(in defaults: UserDefaults = .standard) -> Bool {
         defaults.object(forKey: Key.showsMenuBarExtra) as? Bool ?? true
@@ -54,6 +79,12 @@ final class Preferences {
         self.defaults = defaults
         showsMenuBarExtra = Self.storedShowsMenuBarExtra(in: defaults)
         showsFreeSpaceInMenuBar = defaults.object(forKey: Key.showsFreeSpaceInMenuBar) as? Bool ?? true
+        startsInMenuBar = defaults.bool(forKey: Key.startsInMenuBar)
+        warnsWhenDiskSpaceLow = defaults.object(forKey: Key.warnsWhenDiskSpaceLow) as? Bool ?? true
+        lowDiskSpaceThresholdBytes = (defaults.object(forKey: Key.lowDiskSpaceThresholdBytes) as? NSNumber)?.int64Value
+            ?? 20_000_000_000
+        scansWhenDiskSpaceLow = defaults.object(forKey: Key.scansWhenDiskSpaceLow) as? Bool ?? true
+        lastLowSpaceAlertAt = defaults.object(forKey: Key.lastLowSpaceAlertAt) as? Date
         largeFileMinimumBytes = (defaults.object(forKey: Key.largeFileMinimumBytes) as? NSNumber)?.int64Value
             ?? LargeFileSearch.defaultMinimumBytes
         if let paths = defaults.stringArray(forKey: Key.projectRoots) {
