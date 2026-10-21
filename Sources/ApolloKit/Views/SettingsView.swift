@@ -1,16 +1,76 @@
 import ApolloKitCore
 import AppKit
+import ServiceManagement
 import SwiftUI
 
 struct SettingsView: View {
     var body: some View {
         TabView {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gearshape") }
             ScanLocationsSettings()
                 .tabItem { Label("Locations", systemImage: "folder") }
             RulesSettings()
                 .tabItem { Label("Rules", systemImage: "list.bullet.rectangle") }
         }
         .frame(width: 620, height: 520)
+    }
+}
+
+private struct GeneralSettings: View {
+    @Environment(AppModel.self) private var model
+    @State private var launchAtLoginStatus = SMAppService.mainApp.status
+    @State private var launchAtLoginError: String?
+
+    var body: some View {
+        @Bindable var preferences = model.preferences
+
+        Form {
+            Section {
+                Toggle("Show ApolloKit in the menu bar", isOn: $preferences.showsMenuBarExtra)
+                Toggle("Show free space next to the icon", isOn: $preferences.showsFreeSpaceInMenuBar)
+                    .disabled(!preferences.showsMenuBarExtra)
+            } header: {
+                Text("Menu Bar")
+            } footer: {
+                Text("When the window is closed, ApolloKit keeps running in the menu bar and leaves the Dock.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Startup") {
+                Toggle("Launch at login", isOn: Binding(
+                    get: { launchAtLoginStatus == .enabled },
+                    set: { setLaunchAtLogin($0) }
+                ))
+                if launchAtLoginStatus == .requiresApproval {
+                    HStack {
+                        Text("Allow ApolloKit in Login Items to finish enabling.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
+                    }
+                }
+                if let launchAtLoginError {
+                    Text(launchAtLoginError)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            launchAtLoginError = nil
+        } catch {
+            launchAtLoginError = "Could not update login item: \(error.localizedDescription)"
+        }
+        launchAtLoginStatus = SMAppService.mainApp.status
     }
 }
 

@@ -34,6 +34,21 @@ final class AppModel {
 
     var isBusy: Bool { phase != .idle }
 
+    init() {
+        // Keeps the menu bar's free-space readout current while the app sits in the background.
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard let self else { return }
+                self.refreshDiskSpace()
+            }
+        }
+    }
+
+    func refreshDiskSpace() {
+        diskSpace = DiskSpace.current()
+    }
+
     // MARK: - Derived state
 
     func items(in group: RuleGroup) -> [CleanupItem] {
@@ -196,6 +211,9 @@ struct DiskSpace: Equatable {
     let availableBytes: Int64
 
     var usedBytes: Int64 { max(0, totalBytes - availableBytes) }
+    var usedFraction: Double { totalBytes > 0 ? Double(usedBytes) / Double(totalBytes) : 0 }
+    /// Under 10% free, macOS starts purging caches and updates may fail to install.
+    var isLow: Bool { availableBytes < totalBytes / 10 }
 
     static func current() -> DiskSpace? {
         let values = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [
