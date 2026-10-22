@@ -2,33 +2,29 @@ import ApolloKitCore
 import AppKit
 import SwiftUI
 
-/// Status item: a disk gauge plus free space, or progress while a scan or cleanup runs.
+/// Status item: the app glyph plus free space, or progress while a scan or cleanup runs.
 struct MenuBarLabel: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: symbolName)
+            if let symbolName {
+                Image(systemName: symbolName)
+            } else {
+                Image(nsImage: MenuBarGlyph.image)
+            }
             if let text {
                 Text(text).monospacedDigit()
             }
         }
     }
 
-    private var symbolName: String {
+    /// `nil` shows the app's own glyph; progress and warnings use system symbols.
+    private var symbolName: String? {
         switch model.phase {
-        case .scanning: return "sparkle.magnifyingglass"
-        case .cleaning: return "sparkles"
-        case .idle:
-            guard let disk = model.diskSpace else { return "internaldrive" }
-            if model.isDiskSpaceLow { return "exclamationmark.triangle.fill" }
-            switch disk.usedFraction {
-            case ..<0.2: return "gauge.with.dots.needle.0percent"
-            case ..<0.42: return "gauge.with.dots.needle.33percent"
-            case ..<0.58: return "gauge.with.dots.needle.50percent"
-            case ..<0.85: return "gauge.with.dots.needle.67percent"
-            default: return "gauge.with.dots.needle.100percent"
-            }
+        case .scanning: "sparkle.magnifyingglass"
+        case .cleaning: "sparkles"
+        case .idle: model.isDiskSpaceLow ? "exclamationmark.triangle.fill" : nil
         }
     }
 
@@ -43,6 +39,18 @@ struct MenuBarLabel: View {
             return disk.availableBytes.fileSize
         }
     }
+}
+
+/// The app icon's platter, drawn as a template image so it follows the menu bar's appearance.
+enum MenuBarGlyph {
+    static let image: NSImage = {
+        let svg = ##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 18 18" width="18" height="18"><path d="M4.9 9a4.1 4.1 0 1 0 8.2 0a4.1 4.1 0 1 0 -8.2 0ZM7.2 9a1.8 1.8 0 1 1 3.6 0a1.8 1.8 0 1 1 -3.6 0ZM16.19 7.73A7.3 7.3 0 1 1 11.5 2.14L10.66 4.44A4.85 4.85 0 1 0 13.78 8.16Z" fill="#000" fill-rule="evenodd"/><path d="M12.49 1.3A7.3 7.3 0 0 1 17.18 6.9L14.77 7.32A4.85 4.85 0 0 0 11.65 3.61Z" fill="#000"/></svg>"##
+        let image = NSImage(data: Data(svg.utf8)) ?? NSImage(systemSymbolName: "internaldrive", accessibilityDescription: nil)!
+        image.size = NSSize(width: 16, height: 16)
+        image.isTemplate = true
+        image.accessibilityDescription = "ApolloKit"
+        return image
+    }()
 }
 
 /// Compact popover: disk, latest findings, two actions. Deletion always goes through the main window's review.

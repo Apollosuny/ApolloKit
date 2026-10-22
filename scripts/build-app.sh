@@ -15,6 +15,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/ApolloKit" "$APP/Contents/MacOS/ApolloKit"
 cp "$ROOT/Support/Info.plist" "$APP/Contents/Info.plist"
+# Regenerate with `scripts/make-icon.sh` after replacing the renders in Support/Icon.
+cp "$ROOT/Support/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Ad-hoc signature gives the bundle a stable identity for the Full Disk Access grant on this machine.
 codesign --force --sign - "$APP"
