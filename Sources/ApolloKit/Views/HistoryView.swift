@@ -140,16 +140,32 @@ struct HistoryView: View {
         .cardSurface()
     }
 
+    private func symbol(for source: CleanupRecord.Source) -> String {
+        switch source {
+        case .smartScan: "sparkle.magnifyingglass"
+        case .uninstaller: "trash.square"
+        case .diskMap: "chart.pie"
+        }
+    }
+
+    private func title(for record: CleanupRecord) -> String {
+        switch record.source {
+        case .smartScan: "Smart Scan cleanup"
+        case .uninstaller: record.title.map { "Uninstalled \($0)" } ?? "Uninstall"
+        case .diskMap: "Disk Map cleanup"
+        }
+    }
+
     private var recentCleanups: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Recent cleanups").font(.headline)
             ForEach(history.records.reversed().prefix(20)) { record in
                 HStack(spacing: 10) {
-                    Image(systemName: record.source == .uninstaller ? "trash.square" : "sparkle.magnifyingglass")
+                    Image(systemName: symbol(for: record.source))
                         .foregroundStyle(.secondary)
                         .frame(width: 22)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(record.title.map { "Uninstalled \($0)" } ?? "Smart Scan cleanup")
+                        Text(title(for: record))
                         Text("\(record.date.formatted(date: .abbreviated, time: .shortened)) · \(record.itemCount) items")
                             .font(.caption)
                             .foregroundStyle(.secondary)

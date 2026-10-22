@@ -4,6 +4,7 @@ import SwiftUI
 enum SidebarSelection: Hashable {
     case overview
     case group(RuleGroup)
+    case diskMap
     case uninstaller
     case startupItems
     case ports
@@ -13,7 +14,7 @@ enum SidebarSelection: Hashable {
     var showsCleanBar: Bool {
         switch self {
         case .overview, .group: true
-        case .uninstaller, .startupItems, .ports, .history: false
+        case .diskMap, .uninstaller, .startupItems, .ports, .history: false
         }
     }
 }
@@ -37,6 +38,8 @@ struct ContentView: View {
                     OverviewView(selection: $selection)
                 case .group(let group):
                     GroupDetailView(group: group)
+                case .diskMap:
+                    DiskMapView()
                 case .uninstaller:
                     UninstallerView()
                 case .startupItems:
@@ -123,6 +126,8 @@ struct SidebarView: View {
             }
 
             Section("Tools") {
+                Label("Disk Map", systemImage: "chart.pie")
+                    .tag(SidebarSelection.diskMap)
                 Label("Uninstaller", systemImage: "trash.square")
                     .tag(SidebarSelection.uninstaller)
                 Label("Startup Items", systemImage: "power.circle")

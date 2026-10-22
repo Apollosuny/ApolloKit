@@ -4,6 +4,7 @@ public struct CleanupRecord: Codable, Sendable, Hashable, Identifiable {
     public enum Source: String, Codable, Sendable {
         case smartScan
         case uninstaller
+        case diskMap
     }
 
     public var id = UUID()

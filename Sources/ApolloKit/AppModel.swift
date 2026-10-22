@@ -32,6 +32,7 @@ final class AppModel {
     let startupItems = StartupItemsModel()
     let history = HistoryModel()
     let ports = PortsModel()
+    let diskMap = DiskMapModel()
     let notifier = Notifier()
 
     /// A screen the menu bar asked the main window to show; consumed by `ContentView`.
@@ -55,6 +56,7 @@ final class AppModel {
         hidesWindowAtLaunch = preferences.startsInMenuBar && preferences.showsMenuBarExtra
         notifier.onOpen = { [weak self] in self?.showMainWindow() }
         uninstaller.onUninstall = { [weak self] record in self?.history.record(record) }
+        diskMap.onClean = { [weak self] record in self?.history.record(record) }
         checkLowDiskSpace()
 
         // Keeps the menu bar's free-space readout current while the app sits in the background.
