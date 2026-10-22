@@ -6,13 +6,14 @@ enum SidebarSelection: Hashable {
     case group(RuleGroup)
     case uninstaller
     case startupItems
+    case ports
     case history
 
     /// Tools have their own review-and-remove flow, so the Smart Scan clean bar stays hidden there.
     var showsCleanBar: Bool {
         switch self {
         case .overview, .group: true
-        case .uninstaller, .startupItems, .history: false
+        case .uninstaller, .startupItems, .ports, .history: false
         }
     }
 }
@@ -40,6 +41,8 @@ struct ContentView: View {
                     UninstallerView()
                 case .startupItems:
                     StartupItemsView()
+                case .ports:
+                    PortsView()
                 case .history:
                     HistoryView()
                 }
@@ -55,7 +58,16 @@ struct ContentView: View {
             // Scan and clean progress live on the Smart Scan screen; a background scan leaves the user where they are.
             if isBusy, !model.isBackgroundScan { selection = .overview }
         }
+        .onChange(of: model.requestedSidebarSelection) { _, requested in
+            guard let requested else { return }
+            selection = requested
+            model.requestedSidebarSelection = nil
+        }
         .onAppear {
+            if let requested = model.requestedSidebarSelection {
+                selection = requested
+                model.requestedSidebarSelection = nil
+            }
             model.openMainWindow = { [openWindow] in openWindow(id: ApolloKitApp.mainWindowID) }
             if model.consumeHideWindowAtLaunch() {
                 dismissWindow(id: ApolloKitApp.mainWindowID)
@@ -115,6 +127,8 @@ struct SidebarView: View {
                     .tag(SidebarSelection.uninstaller)
                 Label("Startup Items", systemImage: "power.circle")
                     .tag(SidebarSelection.startupItems)
+                Label("Ports", systemImage: "network")
+                    .tag(SidebarSelection.ports)
                 Label("History", systemImage: "clock.arrow.circlepath")
                     .tag(SidebarSelection.history)
             }

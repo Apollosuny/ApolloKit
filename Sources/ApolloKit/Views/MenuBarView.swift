@@ -61,6 +61,10 @@ struct MenuBarPanel: View {
             Divider()
             findingsSection
             actions
+            if !model.ports.developerPorts.isEmpty {
+                Divider()
+                portsSection
+            }
             Divider()
             footer
         }
@@ -68,6 +72,7 @@ struct MenuBarPanel: View {
         .frame(width: 290)
         .onAppear {
             model.refreshDiskSpace()
+            model.ports.reload()
             model.openMainWindow = { [openWindow] in openWindow(id: ApolloKitApp.mainWindowID) }
         }
     }
@@ -219,6 +224,27 @@ struct MenuBarPanel: View {
         .controlSize(.large)
     }
 
+    private var portsSection: some View {
+        let ports = model.ports.developerPorts
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Ports in Use").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Spacer()
+                Button(ports.count > maxPortRows ? "All \(ports.count)" : "Manage") {
+                    model.requestedSidebarSelection = .ports
+                    showMainWindow()
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+            }
+            ForEach(ports.prefix(maxPortRows)) { port in
+                MenuBarPortRow(port: port)
+            }
+        }
+    }
+
+    private let maxPortRows = 4
+
     private var footer: some View {
         HStack(spacing: 12) {
             Button("Open ApolloKit") { showMainWindow() }
@@ -246,5 +272,69 @@ struct MenuBarPanel: View {
     private func showMainWindow() {
         model.openMainWindow = { [openWindow] in openWindow(id: ApolloKitApp.mainWindowID) }
         model.showMainWindow()
+    }
+}
+
+
+/// One port in the popover. Stop needs a second click instead of a dialog, which popovers handle poorly.
+private struct MenuBarPortRow: View {
+    @Environment(AppModel.self) private var model
+    let port: ListeningPort
+    @State private var isConfirmingStop = false
+
+    var body: some View {
+        let ports = model.ports
+        HStack(spacing: 8) {
+            Button { ports.open(port) } label: {
+                HStack(spacing: 8) {
+                    Text(String(port.port))
+                        .monospacedDigit()
+                        .fontWeight(.medium)
+                        .frame(minWidth: 40, alignment: .leading)
+                    Text(subtitle)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open http://localhost:\(String(port.port))")
+
+            Spacer(minLength: 4)
+
+            if ports.stoppingPortIDs.contains(port.id) {
+                ProgressView().controlSize(.mini)
+            } else if ports.unresponsivePortIDs.contains(port.id) {
+                Button("Force Stop") { ports.stop(port, force: true) }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.red)
+            } else if ports.canStop(port) {
+                if isConfirmingStop {
+                    Button("Stop?") { ports.stop(port) }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.red)
+                } else {
+                    Button { isConfirmingStop = true } label: {
+                        Image(systemName: "xmark.circle.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    .help("Stop \(port.processName)")
+                }
+            }
+        }
+        .font(.callout)
+        .task(id: isConfirmingStop) {
+            // An unanswered confirmation reverts, so a later stray click can't stop the process.
+            guard isConfirmingStop else { return }
+            try? await Task.sleep(for: .seconds(3))
+            isConfirmingStop = false
+        }
+    }
+
+    private var subtitle: String {
+        let project = port.projectURL(homeDirectory: model.ports.homeDirectory)?.lastPathComponent
+        return [port.processName, project].compactMap { $0 }.joined(separator: " · ")
     }
 }

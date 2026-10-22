@@ -31,7 +31,11 @@ final class AppModel {
     let uninstaller = UninstallerModel()
     let startupItems = StartupItemsModel()
     let history = HistoryModel()
+    let ports = PortsModel()
     let notifier = Notifier()
+
+    /// A screen the menu bar asked the main window to show; consumed by `ContentView`.
+    var requestedSidebarSelection: SidebarSelection?
 
     /// Opens the main window; set by any live SwiftUI view, since only views can reach `openWindow`.
     @ObservationIgnored var openMainWindow: (() -> Void)?
