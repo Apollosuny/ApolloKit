@@ -41,6 +41,18 @@ import Testing
         try policy.validate(tree.url("Volumes/Dev/app/node_modules"))
         #expect(throws: SafetyPolicy.Violation.self) { try policy.validate(tree.url("Volumes/Dev")) }
     }
+
+    @Test func neverCleanListCoversTheItemItsContentsAndItsParents() throws {
+        let tree = try TemporaryTree()
+        let policy = SafetyPolicy(homeDirectory: tree.root, excludedPaths: [tree.url(".cache/opencode/bin")])
+
+        for path in [".cache/opencode/bin", ".cache/opencode/bin/opencode", ".cache/opencode"] {
+            #expect(throws: SafetyPolicy.Violation.excludedByUser(tree.url(path).path)) { try policy.validate(tree.url(path)) }
+        }
+        try policy.validate(tree.url(".cache/opencode/models.json"))
+        try policy.validate(tree.url(".cache/opencode/bin-old"))
+        #expect(!policy.isExcludedByUser(tree.url(".cache/prisma")))
+    }
 }
 
 @Suite struct CleanerTests {

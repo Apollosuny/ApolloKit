@@ -12,6 +12,8 @@ struct SettingsView: View {
                 .tabItem { Label("Locations", systemImage: "folder") }
             RulesSettings()
                 .tabItem { Label("Rules", systemImage: "list.bullet.rectangle") }
+            NeverCleanSettings()
+                .tabItem { Label("Never Clean", systemImage: "hand.raised") }
         }
         .frame(width: 620, height: 520)
     }
@@ -210,5 +212,55 @@ private struct RulesSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct NeverCleanSettings: View {
+    @Environment(AppModel.self) private var model
+    @State private var highlighted = Set<URL>()
+
+    var body: some View {
+        let preferences = model.preferences
+
+        VStack(alignment: .leading, spacing: 10) {
+            Text("ApolloKit never offers these for removal and refuses to remove them, anything inside them, or any folder that contains them. Add items from the context menu in Smart Scan or Disk Map, or here.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            List(preferences.excludedPaths, id: \.self, selection: $highlighted) { url in
+                Label(url.path, systemImage: "hand.raised")
+            }
+            .listStyle(.bordered)
+            .overlay {
+                if preferences.excludedPaths.isEmpty {
+                    Text("Nothing excluded").foregroundStyle(.secondary)
+                }
+            }
+
+            HStack {
+                Button("Add…", systemImage: "plus") { choose() }
+                Button("Remove", systemImage: "minus") {
+                    preferences.excludedPaths.removeAll { highlighted.contains($0) }
+                    highlighted.removeAll()
+                }
+                .disabled(highlighted.isEmpty)
+            }
+            Text("Removed entries show up again after the next scan.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        panel.showsHiddenFiles = true
+        panel.prompt = "Never Clean"
+        if panel.runModal() == .OK {
+            model.neverClean(panel.urls)
+        }
     }
 }

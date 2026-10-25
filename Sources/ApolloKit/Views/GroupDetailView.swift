@@ -170,6 +170,9 @@ struct GroupDetailView: View {
             Divider()
             Button("Mark for Cleanup") { model.select(chosen, true) }
             Button("Unmark") { model.select(chosen, false) }
+            Divider()
+            Button("Never Clean This") { model.neverClean(chosen.compactMap(\.fileURL)) }
+                .disabled(chosen.allSatisfy { $0.fileURL == nil })
         } primaryAction: { ids in
             model.revealInFinder(items.filter { ids.contains($0.id) }.compactMap(\.url))
         }

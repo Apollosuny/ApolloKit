@@ -477,10 +477,10 @@ private struct ChildRow: View {
                 .disabled(isIncluded)
                 .help(isIncluded ? "Included with its enclosing folder" : isCollected ? "Remove from collection" : "Collect for removal")
             } else {
-                Image(systemName: "lock")
+                Image(systemName: diskMap.isExcluded(node) ? "hand.raised" : "lock")
                     .foregroundStyle(.tertiary)
                     .frame(width: 16)
-                    .help(node.isRemovable ? "Protected location" : "Small items are listed together and can't be collected")
+                    .help(lockHelp)
             }
 
             Image(systemName: "chevron.right")
@@ -500,8 +500,18 @@ private struct ChildRow: View {
                     Button(isCollected ? "Remove from Collection" : "Collect for Removal") { diskMap.toggleCollected(node) }
                         .disabled(isIncluded)
                 }
+                if !diskMap.isExcluded(node) {
+                    Divider()
+                    Button("Never Clean This") { model.neverClean([node.url]) }
+                }
             }
         }
+    }
+
+    private var lockHelp: String {
+        if !node.isRemovable { return "Small items are listed together and can't be collected" }
+        if diskMap.isExcluded(node) { return "On your Never Clean list, or contains something that is" }
+        return "Protected location"
     }
 
     private var fraction: Double {

@@ -6,11 +6,13 @@ public struct SafetyPolicy: Sendable {
     public enum Violation: Error, Equatable, LocalizedError {
         case outsideAllowedRoots(String)
         case protectedLocation(String)
+        case excludedByUser(String)
 
         public var errorDescription: String? {
             switch self {
             case .outsideAllowedRoots(let path): "Refused: \(path) is outside your home folder and scan locations."
             case .protectedLocation(let path): "Refused: \(path) is a protected location."
+            case .excludedByUser(let path): "Refused: \(path) is on your Never Clean list, or contains something that is."
             }
         }
     }
@@ -26,14 +28,23 @@ public struct SafetyPolicy: Sendable {
 
     private let allowedRoots: [String]
     private let protectedPaths: Set<String>
+    private let excludedPaths: [String]
 
-    public init(homeDirectory: URL, additionalAllowedRoots: [URL] = []) {
+    /// - Parameter excludedPaths: the user's Never Clean list. Neither these paths, anything inside them,
+    ///   nor any folder containing them can be removed.
+    public init(homeDirectory: URL, additionalAllowedRoots: [URL] = [], excludedPaths: [URL] = []) {
         let home = Self.canonicalPath(homeDirectory)
         let extraRoots = additionalAllowedRoots.map(Self.canonicalPath)
         self.allowedRoots = [home] + extraRoots
         self.protectedPaths = Set(
             ["/", home] + extraRoots + Self.protectedHomeRelativePaths.map { home + "/" + $0 }
         )
+        self.excludedPaths = excludedPaths.map(Self.canonicalPath)
+    }
+
+    public func isExcludedByUser(_ url: URL) -> Bool {
+        let path = Self.canonicalPath(url)
+        return excludedPaths.contains { $0 == path || path.hasPrefix($0 + "/") || $0.hasPrefix(path + "/") }
     }
 
     public func validate(_ url: URL) throws {
@@ -43,6 +54,9 @@ public struct SafetyPolicy: Sendable {
         }
         if protectedPaths.contains(path) || protectedPaths.contains(where: { $0.hasPrefix(path + "/") }) {
             throw Violation.protectedLocation(path)
+        }
+        if isExcludedByUser(url) {
+            throw Violation.excludedByUser(path)
         }
     }
 

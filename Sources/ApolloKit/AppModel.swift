@@ -58,6 +58,9 @@ final class AppModel {
         notifier.onOpen = { [weak self] in self?.showMainWindow() }
         uninstaller.onUninstall = { [weak self] record in self?.history.record(record) }
         diskMap.onClean = { [weak self] record in self?.history.record(record) }
+        // Read through the closures so views that ask the tools observe changes to the list.
+        diskMap.excludedPaths = { [preferences] in preferences.excludedPaths }
+        uninstaller.excludedPaths = { [preferences] in preferences.excludedPaths }
         checkLowDiskSpace()
 
         // Keeps the menu bar's free-space readout current while the app sits in the background.
@@ -199,9 +202,11 @@ final class AppModel {
 
         activeTask = Task {
             do {
-                let report = try await scanner.scan(enabledRuleIDs: enabledRuleIDs, projectRoots: projectRoots) { [weak self] progress in
+                var report = try await scanner.scan(enabledRuleIDs: enabledRuleIDs, projectRoots: projectRoots) { [weak self] progress in
                     Task { @MainActor in self?.apply(progress) }
                 }
+                let policy = safetyPolicy
+                report.items.removeAll { $0.fileURL.map(policy.isExcludedByUser) ?? false }
                 self.report = report
                 history.record(ScanSnapshot(report: report))
                 // Pre-select only items that tools regenerate on their own.
@@ -227,10 +232,7 @@ final class AppModel {
         let items = selectedItems
         guard !items.isEmpty else { return }
 
-        let cleaner = Cleaner(policy: SafetyPolicy(
-            homeDirectory: homeDirectory,
-            additionalAllowedRoots: preferences.projectRoots
-        ), fileUsage: FileUsageMonitor())
+        let cleaner = Cleaner(policy: safetyPolicy, fileUsage: FileUsageMonitor())
         phase = .cleaning(completed: 0, total: items.count)
         cleaningItemName = items.first?.displayName
         let itemNames = items.map(\.displayName)
@@ -258,6 +260,27 @@ final class AppModel {
 
     func cancel() {
         activeTask?.cancel()
+    }
+
+    private var safetyPolicy: SafetyPolicy {
+        SafetyPolicy(
+            homeDirectory: homeDirectory,
+            additionalAllowedRoots: preferences.projectRoots,
+            excludedPaths: preferences.excludedPaths
+        )
+    }
+
+    /// Adds items to the Never Clean list and drops them, and anything they contain or sit in, from every tool.
+    func neverClean(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        preferences.addExclusions(urls)
+        let policy = safetyPolicy
+        if let excluded = report?.items.filter({ $0.fileURL.map(policy.isExcludedByUser) ?? false }), !excluded.isEmpty {
+            let ids = Set(excluded.map(\.id))
+            report?.items.removeAll { ids.contains($0.id) }
+            selectedItemIDs.subtract(ids)
+        }
+        diskMap.dropExcludedFromCollection()
     }
 
     /// Shows a Smart Scan group, scanning first when there are no results to show yet.

@@ -26,11 +26,13 @@ final class DiskMapModel {
     private(set) var lastResult: Result?
     /// Called after every removal so the cleanup lands in the history.
     @ObservationIgnored var onClean: ((CleanupRecord) -> Void)?
+    /// The Never Clean list, owned by the preferences.
+    @ObservationIgnored var excludedPaths: () -> [URL] = { [] }
 
     let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
     @ObservationIgnored private let scanner = DiskMapScanner()
     @ObservationIgnored private var scanTask: Task<Void, Never>?
-    private var policy: SafetyPolicy { SafetyPolicy(homeDirectory: homeDirectory) }
+    private var policy: SafetyPolicy { SafetyPolicy(homeDirectory: homeDirectory, excludedPaths: excludedPaths()) }
 
     var focusedNode: DiskNode? {
         guard let root else { return nil }
@@ -130,6 +132,15 @@ final class DiskMapModel {
         collected.removeAll { $0.url.path.hasPrefix(node.url.path + "/") }
         collected.append(node)
         lastResult = nil
+    }
+
+    func isExcluded(_ node: DiskNode) -> Bool {
+        node.isRemovable && policy.isExcludedByUser(node.url)
+    }
+
+    func dropExcludedFromCollection() {
+        let policy = policy
+        collected.removeAll { policy.isExcludedByUser($0.url) }
     }
 
     func clearCollected() {

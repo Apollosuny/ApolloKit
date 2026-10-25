@@ -28,6 +28,8 @@ final class UninstallerModel {
     private(set) var runningBundleIdentifiers: Set<String> = []
     /// Called after every removal so the cleanup lands in the history.
     @ObservationIgnored var onUninstall: ((CleanupRecord) -> Void)?
+    /// The Never Clean list, owned by the preferences.
+    @ObservationIgnored var excludedPaths: () -> [URL] = { [] }
 
     @ObservationIgnored private let uninstaller = AppUninstaller()
     @ObservationIgnored private var sizeTask: Task<Void, Never>?
@@ -123,8 +125,10 @@ final class UninstallerModel {
         isLoadingFootprint = true
         let uninstaller = uninstaller
         let others = Set(apps.map(\.bundleIdentifier))
+        let policy = SafetyPolicy(homeDirectory: homeDirectory, excludedPaths: excludedPaths())
         footprintTask = Task {
             let items = await Task.detached { uninstaller.footprint(of: app, otherBundleIdentifiers: others) }.value
+                .filter { !($0.fileURL.map(policy.isExcludedByUser) ?? false) }
             guard !Task.isCancelled, selectedAppID == app.id else { return }
             footprint = items
             // Name-only matches start unchecked; everything matched by bundle identifier is selected.
@@ -160,7 +164,8 @@ final class UninstallerModel {
         // The bundle lives outside the home folder; allow exactly its parent folder for this cleanup.
         let cleaner = Cleaner(policy: SafetyPolicy(
             homeDirectory: homeDirectory,
-            additionalAllowedRoots: [app.url.deletingLastPathComponent()]
+            additionalAllowedRoots: [app.url.deletingLastPathComponent()],
+            excludedPaths: excludedPaths()
         ))
 
         Task {
