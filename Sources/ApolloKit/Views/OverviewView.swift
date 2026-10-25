@@ -53,8 +53,15 @@ private struct ScanStartView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing))
-                        .shadow(color: .purple.opacity(isHovering ? 0.45 : 0.25), radius: isHovering ? 28 : 18, y: 8)
+                        .fill(LinearGradient(colors: [.brandOrangeLight, .brandOrange], startPoint: .top, endPoint: .bottom))
+                        .overlay {
+                            Circle()
+                                .strokeBorder(
+                                    LinearGradient(colors: [.white.opacity(0.35), .clear], startPoint: .top, endPoint: .center),
+                                    lineWidth: 1.5
+                                )
+                        }
+                        .shadow(color: .brandOrange.opacity(isHovering ? 0.45 : 0.25), radius: isHovering ? 28 : 18, y: 8)
                     VStack(spacing: 6) {
                         Image(systemName: "sparkle.magnifyingglass")
                             .font(.system(size: 44, weight: .semibold))
@@ -119,7 +126,7 @@ private struct ScanningView: View {
         VStack(spacing: 28) {
             Spacer()
 
-            ProgressRing(fraction: model.scanFraction, tint: .purple) {
+            ProgressRing(fraction: model.scanFraction, tint: .brandOrange) {
                 VStack(spacing: 2) {
                     Text(model.liveTotalBytes.fileSize)
                         .font(.system(size: 30, weight: .bold, design: .rounded))

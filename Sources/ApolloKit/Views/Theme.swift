@@ -17,6 +17,12 @@ extension RuleGroup {
     }
 }
 
+extension Color {
+    /// The orange of the app icon's highlighted disk segment, used for the scan button and its progress.
+    static let brandOrange = Color(red: 0.95, green: 0.55, blue: 0.16)
+    static let brandOrangeLight = Color(red: 1.0, green: 0.71, blue: 0.33)
+}
+
 extension Int64 {
     var fileSize: String { formatted(.byteCount(style: .file)) }
 }
@@ -147,21 +153,41 @@ struct ProgressRing<Center: View>: View {
     @State private var rotation: Double = 0
 
     var body: some View {
+        let arcEnd = fraction.map { max(0.02, $0) } ?? 0.25
+        let arcStyle = StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+
         ZStack {
             Circle()
                 .stroke(Color.primary.opacity(0.08), lineWidth: lineWidth)
             Circle()
-                .trim(from: 0, to: fraction.map { max(0.02, $0) } ?? 0.25)
-                .stroke(
-                    AngularGradient(colors: [tint.opacity(0.4), tint], center: .center),
-                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
-                )
+                .trim(from: 0, to: arcEnd)
+                .stroke(AngularGradient(colors: [tint.opacity(0.4), tint], center: .center), style: arcStyle)
+                .overlay {
+                    // A glint sweeps the filled arc so a long step near the end never looks frozen.
+                    if fraction != nil {
+                        Circle()
+                            .stroke(
+                                AngularGradient(
+                                    stops: [
+                                        .init(color: .clear, location: 0),
+                                        .init(color: .clear, location: 0.8),
+                                        .init(color: .white.opacity(0.55), location: 0.95),
+                                        .init(color: .clear, location: 1),
+                                    ],
+                                    center: .center
+                                ),
+                                lineWidth: lineWidth
+                            )
+                            .rotationEffect(.degrees(rotation))
+                            .mask(Circle().trim(from: 0, to: arcEnd).stroke(style: arcStyle))
+                    }
+                }
                 .rotationEffect(.degrees(fraction == nil ? rotation : -90))
                 .animation(.smooth, value: fraction)
             center()
         }
         .onAppear {
-            withAnimation(.linear(duration: 1.2).repeatForever(autoreverses: false)) {
+            withAnimation(.linear(duration: 1.6).repeatForever(autoreverses: false)) {
                 rotation = 360
             }
         }
