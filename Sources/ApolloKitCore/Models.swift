@@ -159,6 +159,9 @@ public struct CleanupRule: Sendable, Hashable, Identifiable {
     public let enabledByDefault: Bool
     /// Items that cannot meaningfully go to the Trash (e.g. the Trash itself).
     public let alwaysDeletePermanently: Bool
+    /// For catch-all locations whose owners are unknown (`~/Library/Caches`, `~/.cache`): items holding
+    /// programs are raised to Caution, since command-line tools keep binaries and engines there too.
+    public let inspectsForPrograms: Bool
 
     public init(
         id: String,
@@ -168,7 +171,8 @@ public struct CleanupRule: Sendable, Hashable, Identifiable {
         risk: RiskLevel,
         locators: [RuleLocator],
         enabledByDefault: Bool = true,
-        alwaysDeletePermanently: Bool = false
+        alwaysDeletePermanently: Bool = false,
+        inspectsForPrograms: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -178,6 +182,36 @@ public struct CleanupRule: Sendable, Hashable, Identifiable {
         self.locators = locators
         self.enabledByDefault = enabledByDefault
         self.alwaysDeletePermanently = alwaysDeletePermanently
+        self.inspectsForPrograms = inspectsForPrograms
+    }
+}
+
+/// Something found about one item that makes it riskier than its rule says.
+public enum CleanupConcern: Sendable, Hashable {
+    /// A cache folder of unknown ownership that holds executables or libraries: a tool may run from it.
+    case containsPrograms
+    /// A toolchain version with command-line tools installed into it, which are removed along with it.
+    case globalTools([String])
+    /// Files inside were open in these processes when last checked.
+    case inUse(processes: [String])
+
+    public var summary: String {
+        switch self {
+        case .containsPrograms: "Contains programs"
+        case .globalTools(let names): "Global tools: \(names.joined(separator: ", "))"
+        case .inUse(let processes): "In use by \(processes.joined(separator: ", "))"
+        }
+    }
+
+    public var explanation: String {
+        switch self {
+        case .containsPrograms:
+            "Holds executables or libraries, so a command-line tool may run from here. It may stop working until it downloads them again."
+        case .globalTools:
+            "Command-line tools installed into this version (npm install -g) are removed with it and must be installed again."
+        case .inUse:
+            "A running app or tool has files open here. Quit it before cleaning."
+        }
     }
 }
 
@@ -197,6 +231,7 @@ public struct CleanupItem: Sendable, Hashable, Identifiable {
     /// files (pnpm, uv) are counted per link, so the real reclaimable space can be lower.
     public let sizeInBytes: Int64
     public let lastModified: Date?
+    public var concerns: [CleanupConcern]
 
     public init(
         id: String,
@@ -205,7 +240,8 @@ public struct CleanupItem: Sendable, Hashable, Identifiable {
         url: URL?,
         action: CleanupAction,
         sizeInBytes: Int64,
-        lastModified: Date?
+        lastModified: Date?,
+        concerns: [CleanupConcern] = []
     ) {
         self.id = id
         self.rule = rule
@@ -214,10 +250,18 @@ public struct CleanupItem: Sendable, Hashable, Identifiable {
         self.action = action
         self.sizeInBytes = sizeInBytes
         self.lastModified = lastModified
+        self.concerns = concerns
     }
 
     /// A file-system item removed by moving it to the Trash or deleting it.
-    public init(url: URL, rule: CleanupRule, sizeInBytes: Int64, lastModified: Date?, displayName: String? = nil) {
+    public init(
+        url: URL,
+        rule: CleanupRule,
+        sizeInBytes: Int64,
+        lastModified: Date?,
+        displayName: String? = nil,
+        concerns: [CleanupConcern] = []
+    ) {
         let defaultName = rule.group == .projectArtifacts
             ? "\(url.deletingLastPathComponent().lastPathComponent)/\(url.lastPathComponent)"
             : url.lastPathComponent
@@ -228,8 +272,20 @@ public struct CleanupItem: Sendable, Hashable, Identifiable {
             url: url,
             action: .removeItem(url),
             sizeInBytes: sizeInBytes,
-            lastModified: lastModified
+            lastModified: lastModified,
+            concerns: concerns
         )
+    }
+
+    /// The rule's risk, raised to Caution by anything found about this particular item.
+    public var risk: RiskLevel {
+        concerns.isEmpty ? rule.risk : .caution
+    }
+
+    /// Paths of file-system items; tool-based removals have none to check.
+    public var fileURL: URL? {
+        if case .removeItem(let url) = action { return url }
+        return nil
     }
 
     public var locationDescription: String {

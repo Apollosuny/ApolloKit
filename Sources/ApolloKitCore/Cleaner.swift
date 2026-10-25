@@ -25,10 +25,14 @@ public struct CleanupOutcome: Sendable {
 public struct Cleaner: Sendable {
     public let policy: SafetyPolicy
     public let runner: any ToolRunner
+    /// Checks right before removal that no running process has files open in an item.
+    /// `nil` skips the check.
+    public let fileUsage: FileUsageMonitor?
 
-    public init(policy: SafetyPolicy, runner: any ToolRunner = ProcessToolRunner()) {
+    public init(policy: SafetyPolicy, runner: any ToolRunner = ProcessToolRunner(), fileUsage: FileUsageMonitor? = nil) {
         self.policy = policy
         self.runner = runner
+        self.fileUsage = fileUsage
     }
 
     public func clean(
@@ -37,8 +41,18 @@ public struct Cleaner: Sendable {
         progress: @escaping @Sendable (_ completed: Int, _ total: Int) -> Void = { _, _ in }
     ) async -> CleanupOutcome {
         var outcome = CleanupOutcome()
+        let inUse = await processesUsing(items)
         for (index, item) in items.enumerated() {
             if Task.isCancelled { break }
+            if let path = item.fileURL?.path, let processes = inUse[path] {
+                // Removing files under a running tool can leave its cache half-written or break the tool mid-run.
+                outcome.failures.append(CleanupFailure(
+                    item: item,
+                    reason: "In use by \(processes.joined(separator: ", ")). Quit it and try again."
+                ))
+                progress(index + 1, items.count)
+                continue
+            }
             do {
                 if try await remove(item, mode: mode) {
                     outcome.removed.append(item)
@@ -51,6 +65,14 @@ public struct Cleaner: Sendable {
             progress(index + 1, items.count)
         }
         return outcome
+    }
+
+    /// One snapshot for the whole batch. When `lsof` itself fails the check is skipped: the items were
+    /// picked by the user, and a missing safeguard should not block every cleanup.
+    private func processesUsing(_ items: [CleanupItem]) async -> [String: [String]] {
+        let urls = items.compactMap(\.fileURL)
+        guard let fileUsage, !urls.isEmpty, let snapshot = try? await fileUsage.snapshot() else { return [:] }
+        return snapshot.processes(using: urls)
     }
 
     /// Returns `false` when the item no longer exists.

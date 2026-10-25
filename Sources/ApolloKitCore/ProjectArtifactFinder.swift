@@ -4,6 +4,7 @@ struct ScanCandidate: Sendable {
     let url: URL
     let rule: CleanupRule
     var displayName: String? = nil
+    var concerns: [CleanupConcern] = []
 }
 
 struct LocateResult: Sendable {

@@ -15,8 +15,9 @@ public enum RuleCatalog {
     static let system: [CleanupRule] = [
         CleanupRule(
             id: "system.userCaches", title: "Application Caches",
-            detail: "Per-app caches in ~/Library/Caches. Apps rebuild them on demand.",
-            group: .system, risk: .safe, locators: [.children("Library/Caches")]
+            detail: "Per-app caches in ~/Library/Caches. Apps rebuild them on demand. Folders holding programs are marked Caution.",
+            group: .system, risk: .safe, locators: [.children("Library/Caches")],
+            inspectsForPrograms: true
         ),
         CleanupRule(
             id: "system.userLogs", title: "User Logs",
@@ -281,8 +282,9 @@ public enum RuleCatalog {
         ),
         CleanupRule(
             id: "pkg.xdgCache", title: "Other CLI Caches",
-            detail: "Per-tool caches in ~/.cache (Prisma, pre-commit, Solana, corepack, …). Tools rebuild them on demand.",
-            group: .packageManagers, risk: .safe, locators: [.children(".cache")]
+            detail: "Per-tool caches in ~/.cache (Prisma, pre-commit, Solana, corepack, …). Tools rebuild them on demand. Folders holding programs are marked Caution.",
+            group: .packageManagers, risk: .safe, locators: [.children(".cache")],
+            inspectsForPrograms: true
         ),
         CleanupRule(
             id: "pkg.browsers", title: "Test Browser Binaries",

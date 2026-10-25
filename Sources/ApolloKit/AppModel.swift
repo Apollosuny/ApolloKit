@@ -112,7 +112,7 @@ final class AppModel {
     private func postLowSpaceAlert() {
         guard let available = diskSpace?.availableBytes else { return }
         let reclaimable = report.map { report in
-            report.items.filter { $0.rule.risk == .safe }.reduce(0) { $0 + $1.sizeInBytes }
+            report.items.filter { $0.risk == .safe }.reduce(0) { $0 + $1.sizeInBytes }
         }
         let notifier = notifier
         Task { await notifier.postLowSpace(availableBytes: available, reclaimableBytes: reclaimable) }
@@ -190,7 +190,8 @@ final class AppModel {
 
         let scanner = DiskScanner(
             homeDirectory: homeDirectory,
-            largeFileSearch: LargeFileSearch(minimumBytes: preferences.largeFileMinimumBytes)
+            largeFileSearch: LargeFileSearch(minimumBytes: preferences.largeFileMinimumBytes),
+            fileUsage: FileUsageMonitor()
         )
         let enabledRuleIDs = preferences.enabledRuleIDs
         let projectRoots = preferences.projectRoots
@@ -203,7 +204,7 @@ final class AppModel {
                 self.report = report
                 history.record(ScanSnapshot(report: report))
                 // Pre-select only items that tools regenerate on their own.
-                selectedItemIDs = Set(report.items.filter { $0.rule.risk == .safe }.map(\.id))
+                selectedItemIDs = Set(report.items.filter { $0.risk == .safe }.map(\.id))
             } catch is CancellationError {
                 // Keep the previous report when the user cancels.
             } catch {
@@ -228,7 +229,7 @@ final class AppModel {
         let cleaner = Cleaner(policy: SafetyPolicy(
             homeDirectory: homeDirectory,
             additionalAllowedRoots: preferences.projectRoots
-        ))
+        ), fileUsage: FileUsageMonitor())
         phase = .cleaning(completed: 0, total: items.count)
         cleaningItemName = items.first?.displayName
         let itemNames = items.map(\.displayName)

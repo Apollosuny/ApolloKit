@@ -8,6 +8,8 @@ public struct DiskScanner: Sendable {
     /// Folders searched for installed apps when deciding whether app data is a leftover.
     public let applicationDirectories: [URL]
     public let largeFileSearch: LargeFileSearch
+    /// Marks items that running processes have files open in, so they are not pre-selected. `nil` skips it.
+    public let fileUsage: FileUsageMonitor?
 
     private static let ignoredEntryNames: Set<String> = [".DS_Store", ".localized"]
 
@@ -17,13 +19,15 @@ public struct DiskScanner: Sendable {
         maximumConcurrentMeasurements: Int = max(2, ProcessInfo.processInfo.activeProcessorCount),
         tools: ToolEnvironment = .system,
         applicationDirectories: [URL]? = nil,
-        largeFileSearch: LargeFileSearch = LargeFileSearch()
+        largeFileSearch: LargeFileSearch = LargeFileSearch(),
+        fileUsage: FileUsageMonitor? = nil
     ) {
         self.homeDirectory = homeDirectory.standardizedFileURL
         self.catalog = catalog
         self.maximumConcurrentMeasurements = maximumConcurrentMeasurements
         self.tools = tools
         self.largeFileSearch = largeFileSearch
+        self.fileUsage = fileUsage
         self.applicationDirectories = applicationDirectories ?? [
             URL(fileURLWithPath: "/Applications"),
             URL(fileURLWithPath: "/Applications/Setapp"),
@@ -97,7 +101,8 @@ public struct DiskScanner: Sendable {
             candidates.append(candidate)
         }
 
-        let (fileItems, measurementIssues) = try await measure(candidates, progress: progress)
+        let (measuredItems, measurementIssues) = try await measure(candidates, progress: progress)
+        let fileItems = await markingItemsInUse(measuredItems)
         let tool = await toolResult
         try Task.checkCancellation()
         return ScanReport(
@@ -106,6 +111,19 @@ public struct DiskScanner: Sendable {
             startedAt: startedAt,
             finishedAt: Date()
         )
+    }
+
+    /// Best effort: without a snapshot the items are reported unmarked, and the cleaner checks again before removing.
+    private func markingItemsInUse(_ items: [CleanupItem]) async -> [CleanupItem] {
+        guard let fileUsage, let snapshot = try? await fileUsage.snapshot() else { return items }
+        let inUse = snapshot.processes(using: items.compactMap(\.fileURL))
+        guard !inUse.isEmpty else { return items }
+        return items.map { item in
+            guard let path = item.fileURL?.path, let processes = inUse[path] else { return item }
+            var marked = item
+            marked.concerns.append(.inUse(processes: processes))
+            return marked
+        }
     }
 
     // MARK: - Fixed paths
@@ -173,10 +191,12 @@ public struct DiskScanner: Sendable {
                         homeDirectory: homeDirectory
                     )
                     for version in versions where !protected.contains(version.lastPathComponent) {
+                        let globalTools = manager.globalTools(in: version)
                         result.candidates.append(ScanCandidate(
                             url: version.standardizedFileURL,
                             rule: rule,
-                            displayName: "\(manager.rawValue) \(version.lastPathComponent)"
+                            displayName: "\(manager.rawValue) \(version.lastPathComponent)",
+                            concerns: globalTools.isEmpty ? [] : [.globalTools(globalTools)]
                         ))
                     }
                 case .leftover(let path, let appBundleNames):
@@ -252,7 +272,8 @@ public struct DiskScanner: Sendable {
         if candidate.rule.group == .largeFiles {
             modified = LargeFileFinder.lastUsedDate(of: candidate.url, modified: modified)
         }
-        return Measured(candidate: candidate, measurement: DirectorySizer.measure(candidate.url), lastModified: modified)
+        let measurement = DirectorySizer.measure(candidate.url, detectsPrograms: candidate.rule.inspectsForPrograms)
+        return Measured(candidate: candidate, measurement: measurement, lastModified: modified)
     }
 
     /// Large-file bundles are found before their size is known, so the threshold is applied after measuring.
@@ -293,7 +314,8 @@ public struct DiskScanner: Sendable {
                         rule: measured.candidate.rule,
                         sizeInBytes: measurement.allocatedBytes,
                         lastModified: measured.lastModified,
-                        displayName: measured.candidate.displayName
+                        displayName: measured.candidate.displayName,
+                        concerns: measured.candidate.concerns + (measurement.containsPrograms ? [.containsPrograms] : [])
                     ))
                 }
 

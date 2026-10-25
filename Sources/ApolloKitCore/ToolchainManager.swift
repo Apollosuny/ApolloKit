@@ -29,15 +29,12 @@ public enum ToolchainManager: String, Sendable, Hashable, CaseIterable {
             return Set(installed.filter { $0 == toolchain || $0.hasPrefix(toolchain + "-") })
 
         case .nvm:
-            let alias = readFile(".nvm/alias/default", in: homeDirectory)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let digits = alias.hasPrefix("v") ? String(alias.dropFirst()) : alias
-            if let first = digits.first, first.isNumber {
+            if let digits = resolveNVMAlias("default", homeDirectory: homeDirectory) {
                 let prefix = "v" + digits
                 let matching = installed.filter { $0 == prefix || $0.hasPrefix(prefix + ".") }
                 if let newestMatching = Self.newest(matching) { return [newestMatching] }
             }
-            // `node`, `lts/*`, `stable` or no alias: nvm resolves to the newest installed version.
+            // `node`, `stable`, no alias or an alias to a version that is not installed: keep the newest.
             return Set(Self.newest(installed).map { [$0] } ?? [])
 
         case .pyenv, .rbenv:
@@ -48,6 +45,40 @@ public enum ToolchainManager: String, Sendable, Hashable, CaseIterable {
                 .filter { !$0.isEmpty && $0 != "system" }
             return Set(versions).intersection(installed)
         }
+    }
+
+    /// Packages installed globally into one version (`npm install -g`). They live inside the version
+    /// folder, so removing the version removes the commands too. Bundled package managers are left out.
+    func globalTools(in versionDirectory: URL) -> [String] {
+        guard self == .nvm else { return [] }
+        let modules = versionDirectory.appendingPathComponent("lib/node_modules")
+        let bundled: Set<String> = ["npm", "corepack"]
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: modules.path)) ?? []
+        return entries.flatMap { entry -> [String] in
+            if entry.hasPrefix(".") || bundled.contains(entry) { return [] }
+            guard entry.hasPrefix("@") else { return [entry] }
+            let scoped = (try? FileManager.default.contentsOfDirectory(atPath: modules.appendingPathComponent(entry).path)) ?? []
+            return scoped.filter { !$0.hasPrefix(".") }.map { "\(entry)/\($0)" }
+        }
+        .sorted()
+    }
+
+    /// Follows nvm's alias files (`default` → `lts/*` → `lts/krypton` → `v24.11.1`) to a version prefix
+    /// without the `v`. `nil` for `node`, `stable` and anything that does not end in a version.
+    private func resolveNVMAlias(_ name: String, homeDirectory: URL) -> String? {
+        var alias = name
+        for _ in 0..<8 {
+            guard !alias.contains(".."),
+                  let value = readFile(".nvm/alias/\(alias)", in: homeDirectory)?
+                      .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty else {
+                return nil
+            }
+            let digits = value.hasPrefix("v") ? String(value.dropFirst()) : value
+            if let first = digits.first, first.isNumber { return digits }
+            alias = value
+        }
+        return nil
     }
 
     private func readFile(_ homeRelativePath: String, in homeDirectory: URL) -> String? {

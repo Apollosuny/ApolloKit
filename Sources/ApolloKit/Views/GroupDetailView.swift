@@ -12,8 +12,8 @@ struct GroupDetailView: View {
         func includes(_ item: CleanupItem) -> Bool {
             switch self {
             case .all: true
-            case .safe: item.rule.risk == .safe
-            case .caution: item.rule.risk == .caution
+            case .safe: item.risk == .safe
+            case .caution: item.risk == .caution
             }
         }
     }
@@ -86,7 +86,7 @@ struct GroupDetailView: View {
             Menu("Select") {
                 Button("Safe Items") {
                     model.select(items, false)
-                    model.select(items.filter { $0.rule.risk == .safe }, true)
+                    model.select(items.filter { $0.risk == .safe }, true)
                 }
                 Button("Not Used in 30 Days") { selectUnused(items, days: 30) }
                     .help("Select items not modified or used in the last 30 days")
@@ -121,7 +121,10 @@ struct GroupDetailView: View {
 
             TableColumn("Name", value: \.displayName) { item in
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(item.displayName)
+                    HStack(spacing: 6) {
+                        Text(item.displayName)
+                        ForEach(item.concerns, id: \.self) { ConcernBadge(concern: $0) }
+                    }
                     Text(item.locationDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -134,7 +137,7 @@ struct GroupDetailView: View {
             TableColumn("Category", value: \.rule.title) { item in
                 HStack(spacing: 6) {
                     Text(item.rule.title)
-                    RiskBadge(risk: item.rule.risk)
+                    RiskBadge(risk: item.risk)
                 }
                 .help(item.rule.detail)
             }

@@ -57,7 +57,7 @@ struct CleanBar: View {
     private var confirmationMessage: String {
         let selected = model.selectedItems
         var lines: [String] = []
-        let cautionCount = selected.filter { $0.rule.risk == .caution }.count
+        let cautionCount = selected.filter { $0.risk == .caution }.count
         if cautionCount > 0 {
             lines.append("\(cautionCount) items are marked Caution and may be slow to regenerate or contain data worth keeping.")
         }

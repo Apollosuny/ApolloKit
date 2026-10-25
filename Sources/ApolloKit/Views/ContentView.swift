@@ -156,3 +156,19 @@ struct RiskBadge: View {
         }
     }
 }
+
+/// Why one item is Caution although its rule is Safe: it holds programs, global tools, or is in use.
+struct ConcernBadge: View {
+    let concern: CleanupConcern
+
+    var body: some View {
+        Text(concern.summary)
+            .font(.caption2.weight(.semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .foregroundStyle(.orange)
+            .background(.orange.opacity(0.15), in: Capsule())
+            .help(concern.explanation)
+    }
+}

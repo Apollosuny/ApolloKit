@@ -128,7 +128,7 @@ final class UninstallerModel {
             guard !Task.isCancelled, selectedAppID == app.id else { return }
             footprint = items
             // Name-only matches start unchecked; everything matched by bundle identifier is selected.
-            selectedItemIDs = Set(items.filter { $0.rule.risk == .safe }.map(\.id))
+            selectedItemIDs = Set(items.filter { $0.risk == .safe }.map(\.id))
             isLoadingFootprint = false
         }
     }

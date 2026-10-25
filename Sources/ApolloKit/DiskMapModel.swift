@@ -142,7 +142,7 @@ final class DiskMapModel {
         let items = collected.map {
             CleanupItem(url: $0.url, rule: DiskMapScanner.removalRule, sizeInBytes: $0.bytes, lastModified: nil, displayName: $0.name)
         }
-        let cleaner = Cleaner(policy: policy)
+        let cleaner = Cleaner(policy: policy, fileUsage: FileUsageMonitor())
 
         Task {
             let outcome = await cleaner.clean(items, mode: mode)

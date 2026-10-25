@@ -273,7 +273,7 @@ private struct CategoryCard: View {
         let items = model.items(in: group)
         let total = model.totalBytes(in: group)
         let selected = model.selectedBytes(in: group)
-        let cautionCount = items.filter { $0.rule.risk == .caution }.count
+        let cautionCount = items.filter { $0.risk == .caution }.count
 
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
@@ -331,7 +331,7 @@ private struct CategoryCard: View {
         if model.selectedBytes(in: group) > 0 {
             model.select(items, false)
         } else {
-            model.select(items.filter { $0.rule.risk == .safe }, true)
+            model.select(items.filter { $0.risk == .safe }, true)
         }
     }
 }

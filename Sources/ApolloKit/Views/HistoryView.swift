@@ -1,4 +1,5 @@
 import ApolloKitCore
+import AppKit
 import Charts
 import SwiftUI
 
@@ -171,6 +172,9 @@ struct HistoryView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if let locations = record.locations, !locations.isEmpty {
+                        RecordLocationsButton(locations: locations, itemCount: record.itemCount)
+                    }
                     if record.movedToTrash {
                         Text("Trash")
                             .font(.caption2.weight(.semibold))
@@ -208,5 +212,47 @@ struct HistoryView: View {
             groups.map { WeeklyBar(week: week, group: $0.key, gigabytes: Double($0.value) / 1_000_000_000) }
         }
         .sorted { $0.week < $1.week }
+    }
+}
+
+/// Lists what a cleanup removed, so a tool that stopped working afterwards can be traced back.
+private struct RecordLocationsButton: View {
+    let locations: [String]
+    let itemCount: Int
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Image(systemName: "list.bullet")
+        }
+        .buttonStyle(.borderless)
+        .help("Show removed items")
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Removed items").font(.headline)
+                    Spacer()
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(locations.joined(separator: "\n"), forType: .string)
+                    }
+                }
+                ScrollView {
+                    Text(locations.joined(separator: "\n"))
+                        .font(.caption.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if itemCount > locations.count {
+                    Text("Largest \(locations.count) of \(itemCount) items.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(12)
+            .frame(width: 520, height: 320)
+        }
     }
 }

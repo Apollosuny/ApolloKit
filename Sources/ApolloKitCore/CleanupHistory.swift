@@ -18,6 +18,9 @@ public struct CleanupRecord: Codable, Sendable, Hashable, Identifiable {
     public let bytesByGroup: [String: Int64]
     /// Moved to the Trash: the space is only freed once the Trash is emptied.
     public let movedToTrash: Bool
+    /// Locations of the removed items, largest first, so a cleanup can be traced afterwards.
+    /// `nil` in records written before paths were kept.
+    public let locations: [String]?
 
     public init(
         date: Date = .now,
@@ -34,7 +37,14 @@ public struct CleanupRecord: Codable, Sendable, Hashable, Identifiable {
         self.bytesByGroup = Dictionary(grouping: removed, by: \.rule.group.rawValue)
             .mapValues { $0.reduce(0) { $0 + $1.sizeInBytes } }
         self.movedToTrash = movedToTrash
+        self.locations = removed
+            .sorted { $0.sizeInBytes > $1.sizeInBytes }
+            .prefix(Self.maximumLocations)
+            .map(\.locationDescription)
     }
+
+    /// Keeps the history file small even after cleaning thousands of project folders.
+    public static let maximumLocations = 300
 }
 
 /// Reclaimable bytes per group at the end of a scan, used to see which caches grow fastest.
