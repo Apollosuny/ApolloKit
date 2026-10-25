@@ -6,7 +6,10 @@ import Observation
 @Observable
 final class Preferences {
     private enum Key {
-        static let projectRoots = "projectRoots"
+        /// The single list kept before detected and user-chosen folders were separated; migrated on launch.
+        static let legacyProjectRoots = "projectRoots"
+        static let addedProjectRoots = "addedProjectRoots"
+        static let removedProjectRoots = "removedProjectRoots"
         static let disabledRuleIDs = "disabledRuleIDs"
         static let knownRuleIDs = "knownRuleIDs"
         static let showsMenuBarExtra = "showsMenuBarExtra"
@@ -18,22 +21,28 @@ final class Preferences {
         static let scansWhenDiskSpaceLow = "scansWhenDiskSpaceLow"
         static let lastLowSpaceAlertAt = "lastLowSpaceAlertAt"
         static let excludedPaths = "excludedPaths"
+        static let activeProjectDays = "activeProjectDays"
     }
-
-    /// Conventional folder names for source checkouts, matched case-insensitively against the home folder.
-    private static let conventionalProjectFolderNames: Set<String> = [
-        "workspace", "projects", "developer", "code", "dev", "src", "repos", "git", "github", "work", "sites",
-    ]
 
     @ObservationIgnored private let defaults: UserDefaults
 
-    var projectRoots: [URL] {
-        didSet { defaults.set(projectRoots.map(\.path), forKey: Key.projectRoots) }
+    private(set) var projectRootList: ProjectRootList {
+        didSet {
+            defaults.set(projectRootList.added.map(\.path), forKey: Key.addedProjectRoots)
+            defaults.set(projectRootList.removed.map(\.path), forKey: Key.removedProjectRoots)
+        }
     }
+
+    var projectRoots: [URL] { projectRootList.roots }
 
     /// The Never Clean list: never offered for removal anywhere, and refused by the safety policy.
     var excludedPaths: [URL] {
         didSet { defaults.set(excludedPaths.map(\.path), forKey: Key.excludedPaths) }
+    }
+
+    /// Projects changed within this many days count as active: their build artifacts are not pre-selected.
+    var activeProjectDays: Int {
+        didSet { defaults.set(activeProjectDays, forKey: Key.activeProjectDays) }
     }
 
     var disabledRuleIDs: Set<String> {
@@ -91,13 +100,20 @@ final class Preferences {
             ?? 20_000_000_000
         scansWhenDiskSpaceLow = defaults.object(forKey: Key.scansWhenDiskSpaceLow) as? Bool ?? true
         lastLowSpaceAlertAt = defaults.object(forKey: Key.lastLowSpaceAlertAt) as? Date
+        activeProjectDays = defaults.object(forKey: Key.activeProjectDays) as? Int ?? 30
         excludedPaths = (defaults.stringArray(forKey: Key.excludedPaths) ?? []).map { URL(fileURLWithPath: $0) }
         largeFileMinimumBytes = (defaults.object(forKey: Key.largeFileMinimumBytes) as? NSNumber)?.int64Value
             ?? LargeFileSearch.defaultMinimumBytes
-        if let paths = defaults.stringArray(forKey: Key.projectRoots) {
-            projectRoots = paths.map { URL(fileURLWithPath: $0, isDirectory: true) }
+        let detected = ProjectRootDetector().detect()
+        if let legacy = defaults.stringArray(forKey: Key.legacyProjectRoots) {
+            projectRootList = ProjectRootList(migratingSavedRoots: legacy.map(Self.folderURL), detected: detected)
+            defaults.removeObject(forKey: Key.legacyProjectRoots)
         } else {
-            projectRoots = Self.detectProjectRoots()
+            projectRootList = ProjectRootList(
+                detected: detected,
+                added: (defaults.stringArray(forKey: Key.addedProjectRoots) ?? []).map(Self.folderURL),
+                removed: (defaults.stringArray(forKey: Key.removedProjectRoots) ?? []).map(Self.folderURL)
+            )
         }
         // Rules added in a later version start from their own default instead of being implicitly enabled.
         let knownRuleIDs = Set(defaults.stringArray(forKey: Key.knownRuleIDs) ?? [])
@@ -110,8 +126,23 @@ final class Preferences {
     }
 
     func addProjectRoots(_ urls: [URL]) {
-        let existing = Set(projectRoots.map(\.standardizedFileURL.path))
-        projectRoots += urls.filter { !existing.contains($0.standardizedFileURL.path) }
+        projectRootList.add(urls)
+    }
+
+    func removeProjectRoots(_ urls: [URL]) {
+        projectRootList.remove(urls)
+    }
+
+    /// Picks up checkout folders created since launch; cheap enough to run before every scan.
+    func refreshDetectedProjectRoots() {
+        let detected = ProjectRootDetector().detect()
+        if detected.map(\.standardizedFileURL) != projectRootList.detected {
+            projectRootList.updateDetected(detected)
+        }
+    }
+
+    private static func folderURL(_ path: String) -> URL {
+        URL(fileURLWithPath: path, isDirectory: true)
     }
 
     func addExclusions(_ urls: [URL]) {
@@ -130,18 +161,5 @@ final class Preferences {
         } else {
             disabledRuleIDs.insert(rule.id)
         }
-    }
-
-    private static func detectProjectRoots() -> [URL] {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let children = (try? FileManager.default.contentsOfDirectory(
-            at: home,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        return children
-            .filter { conventionalProjectFolderNames.contains($0.lastPathComponent.lowercased()) }
-            .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-            .sorted { $0.path < $1.path }
     }
 }

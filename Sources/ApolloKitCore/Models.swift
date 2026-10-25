@@ -194,12 +194,15 @@ public enum CleanupConcern: Sendable, Hashable {
     case globalTools([String])
     /// Files inside were open in these processes when last checked.
     case inUse(processes: [String])
+    /// A build artifact of a project whose files changed recently, so it is probably still being worked on.
+    case activeProject(lastActivity: Date)
 
     public var summary: String {
         switch self {
         case .containsPrograms: "Contains programs"
         case .globalTools(let names): "Global tools: \(names.joined(separator: ", "))"
         case .inUse(let processes): "In use by \(processes.joined(separator: ", "))"
+        case .activeProject: "Active project"
         }
     }
 
@@ -211,6 +214,8 @@ public enum CleanupConcern: Sendable, Hashable {
             "Command-line tools installed into this version (npm install -g) are removed with it and must be installed again."
         case .inUse:
             "A running app or tool has files open here. Quit it before cleaning."
+        case .activeProject(let lastActivity):
+            "The project was changed \(lastActivity.formatted(.relative(presentation: .named))). Removing this means reinstalling or rebuilding before you can run it again."
         }
     }
 }
@@ -330,6 +335,8 @@ public struct ScanIssue: Sendable, Hashable, Identifiable {
 public struct ScanReport: Sendable {
     public var items: [CleanupItem]
     public let issues: [ScanIssue]
+    /// Projects whose build artifacts were found, with when each was last worked on.
+    public let projects: [ProjectSummary]
     public let startedAt: Date
     public let finishedAt: Date
 
@@ -339,7 +346,10 @@ public struct ScanReport: Sendable {
 public enum ScanProgress: Sendable, Equatable {
     case locating(ruleTitle: String)
     case walking(directory: String, visited: Int)
-    case measuring(completed: Int, total: Int)
+    /// `current` names an item still being measured, so a few large folders finishing last don't look like a stall.
+    case measuring(completed: Int, total: Int, current: String?)
+    /// Checks that run after every item is measured, before results are shown.
+    case finishing(step: String)
     /// Emitted once per reported item so the UI can show reclaimable space while the scan runs.
     case discovered(group: RuleGroup, bytes: Int64)
 }

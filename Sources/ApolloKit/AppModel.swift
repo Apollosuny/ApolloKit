@@ -26,6 +26,7 @@ final class AppModel {
     /// Determinate progress once the scan is measuring; `nil` while it is still locating items.
     private(set) var scanFraction: Double?
     private(set) var cleaningItemName: String?
+    @ObservationIgnored private var finishingStepCount = 0
 
     let preferences = Preferences()
     let uninstaller = UninstallerModel()
@@ -133,7 +134,12 @@ final class AppModel {
     }
 
     var selectedItems: [CleanupItem] {
-        report?.items.filter { selectedItemIDs.contains($0.id) } ?? []
+        selectedItems(in: nil)
+    }
+
+    /// Selected items of one category, or of every category when `group` is `nil`.
+    func selectedItems(in group: RuleGroup?) -> [CleanupItem] {
+        report?.items.filter { selectedItemIDs.contains($0.id) && (group == nil || $0.rule.group == group) } ?? []
     }
 
     var selectedBytes: Int64 {
@@ -153,6 +159,18 @@ final class AppModel {
 
     func selectedBytes(in group: RuleGroup) -> Int64 {
         items(in: group).filter { selectedItemIDs.contains($0.id) }.reduce(0) { $0 + $1.sizeInBytes }
+    }
+
+    /// Projects that still have build artifacts in the current results.
+    var projects: [ProjectRow] {
+        guard let report else { return [] }
+        let itemsByID = Dictionary(uniqueKeysWithValues: report.items.map { ($0.id, $0) })
+        let cutoff = Date.now.addingTimeInterval(-TimeInterval(preferences.activeProjectDays) * 24 * 60 * 60)
+        return report.projects.compactMap { summary in
+            let items = summary.itemIDs.compactMap { itemsByID[$0] }
+            guard !items.isEmpty else { return nil }
+            return ProjectRow(summary: summary, items: items, isStale: (summary.lastActivity ?? .distantPast) < cutoff)
+        }
     }
 
     var permissionIssueCount: Int {
@@ -191,13 +209,16 @@ final class AppModel {
         showsCompletion = false
         liveBytesByGroup = [:]
         scanFraction = nil
+        finishingStepCount = 0
 
         let scanner = DiskScanner(
             homeDirectory: homeDirectory,
             largeFileSearch: LargeFileSearch(minimumBytes: preferences.largeFileMinimumBytes),
-            fileUsage: FileUsageMonitor()
+            fileUsage: FileUsageMonitor(),
+            activeProjectWindow: TimeInterval(preferences.activeProjectDays) * 24 * 60 * 60
         )
         let enabledRuleIDs = preferences.enabledRuleIDs
+        preferences.refreshDetectedProjectRoots()
         let projectRoots = preferences.projectRoots
 
         activeTask = Task {
@@ -227,9 +248,10 @@ final class AppModel {
         }
     }
 
-    func clean(mode: DeletionMode) {
+    /// Cleans the selection in one category, leaving other categories' selection for later, or everything when `group` is `nil`.
+    func clean(mode: DeletionMode, in group: RuleGroup? = nil) {
         guard !isBusy else { return }
-        let items = selectedItems
+        let items = selectedItems(in: group)
         guard !items.isEmpty else { return }
 
         let cleaner = Cleaner(policy: safetyPolicy, fileUsage: FileUsageMonitor())
@@ -300,6 +322,8 @@ final class AppModel {
         }
     }
 
+    private static let measuringShare = 0.9
+
     private func apply(_ progress: ScanProgress) {
         // Progress hops can arrive after the scan finished; never resurrect the scanning state.
         guard case .scanning = phase else { return }
@@ -308,9 +332,17 @@ final class AppModel {
             phase = .scanning(status: "Checking \(ruleTitle)…")
         case .walking(let directory, let visited):
             phase = .scanning(status: "Walking projects (\(visited.formatted()) folders) · \(directory)")
-        case .measuring(let completed, let total):
-            phase = .scanning(status: "Measuring \(completed) of \(total) items…")
-            scanFraction = total > 0 ? Double(completed) / Double(total) : nil
+        case .measuring(let completed, let total, let current):
+            // Progress hops are separate tasks, so a late measuring update must not rewind the checks after it.
+            guard finishingStepCount == 0 else { return }
+            phase = .scanning(status: "Measuring \(completed) of \(total) items" + (current.map { " · \($0)" } ?? "…"))
+            // Measuring fills most of the ring; the checks after it fill the rest.
+            scanFraction = total > 0 ? Self.measuringShare * Double(completed) / Double(total) : nil
+        case .finishing(let step):
+            finishingStepCount += 1
+            phase = .scanning(status: step)
+            // Each check closes half the remaining gap, so the ring keeps moving without knowing how many follow.
+            scanFraction = 1 - (1 - Self.measuringShare) * pow(0.5, Double(finishingStepCount))
         case .discovered(let group, let bytes):
             liveBytesByGroup[group, default: 0] += bytes
         }
@@ -333,6 +365,25 @@ struct DiskSpace: Equatable {
             return nil
         }
         return DiskSpace(totalBytes: Int64(total), availableBytes: available)
+    }
+}
+
+struct ProjectRow: Identifiable {
+    let summary: ProjectSummary
+    let items: [CleanupItem]
+    /// Not changed within the active-project window, or its activity could not be read.
+    let isStale: Bool
+
+    var id: String { summary.id }
+    var name: String { summary.name }
+    var totalBytes: Int64 { items.reduce(0) { $0 + $1.sizeInBytes } }
+    var lastActivitySortKey: Date { summary.lastActivity ?? .distantPast }
+    var artifactNames: String {
+        var seen = Set<String>()
+        return items.sorted { $0.sizeInBytes > $1.sizeInBytes }
+            .compactMap { $0.url?.lastPathComponent }
+            .filter { seen.insert($0).inserted }
+            .joined(separator: ", ")
     }
 }
 

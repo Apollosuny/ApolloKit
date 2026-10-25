@@ -130,22 +130,39 @@ private struct ScanLocationsSettings: View {
         let preferences = model.preferences
 
         VStack(alignment: .leading, spacing: 10) {
-            Text("Project folders are searched recursively for build artifacts such as node_modules, .build, target and Pods.")
+            Text("Project folders are searched recursively for build artifacts such as node_modules, .build, target and Pods. Folders in your home folder that hold git repositories are found automatically.")
                 .foregroundStyle(.secondary)
 
             List(preferences.projectRoots, id: \.self, selection: $highlighted) { url in
-                Label(url.path, systemImage: "folder")
+                HStack {
+                    Label(url.path, systemImage: "folder")
+                    Spacer()
+                    Text(preferences.projectRootList.isDetected(url) ? "Found automatically" : "Added")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             .listStyle(.bordered)
 
             HStack {
-                Button("Add Folder…", systemImage: "plus") { chooseFolders() }
+                Button("Add Folder…", systemImage: "plus") {
+                    preferences.addProjectRoots(ProjectFolderPanel.choose())
+                }
                 Button("Remove", systemImage: "minus") {
-                    preferences.projectRoots.removeAll { highlighted.contains($0) }
+                    preferences.removeProjectRoots(Array(highlighted))
                     highlighted.removeAll()
                 }
                 .disabled(highlighted.isEmpty)
+                Spacer()
+                if !preferences.projectRootList.removed.isEmpty {
+                    Button("Restore Removed (\(preferences.projectRootList.removed.count))") {
+                        preferences.addProjectRoots(preferences.projectRootList.removed)
+                    }
+                    .help(preferences.projectRootList.removed.map(\.path).joined(separator: "\n"))
+                }
             }
+
+            ActiveProjectSettings()
 
             Divider()
                 .padding(.vertical, 6)
@@ -155,14 +172,37 @@ private struct ScanLocationsSettings: View {
         .padding(20)
     }
 
-    private func chooseFolders() {
+}
+
+enum ProjectFolderPanel {
+    /// Asks for folders to search for projects; empty when cancelled.
+    @MainActor
+    static func choose() -> [URL] {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
         panel.prompt = "Add"
-        if panel.runModal() == .OK {
-            model.preferences.addProjectRoots(panel.urls)
+        return panel.runModal() == .OK ? panel.urls : []
+    }
+}
+
+private struct ActiveProjectSettings: View {
+    @Environment(AppModel.self) private var model
+
+    private static let days = [7, 14, 30, 90, 180]
+
+    var body: some View {
+        @Bindable var preferences = model.preferences
+
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Projects are active if changed within", selection: $preferences.activeProjectDays) {
+                ForEach(Self.days, id: \.self) { Text("\($0) days").tag($0) }
+            }
+            .fixedSize()
+            Text("Build artifacts of active projects are not pre-selected. Changes apply to the next scan.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
         }
     }
 }

@@ -10,6 +10,9 @@ public struct DiskScanner: Sendable {
     public let largeFileSearch: LargeFileSearch
     /// Marks items that running processes have files open in, so they are not pre-selected. `nil` skips it.
     public let fileUsage: FileUsageMonitor?
+    /// Build artifacts of projects changed within this interval are marked as active, so they are not pre-selected.
+    /// `nil` still reports projects but marks none.
+    public let activeProjectWindow: TimeInterval?
 
     private static let ignoredEntryNames: Set<String> = [".DS_Store", ".localized"]
 
@@ -20,7 +23,8 @@ public struct DiskScanner: Sendable {
         tools: ToolEnvironment = .system,
         applicationDirectories: [URL]? = nil,
         largeFileSearch: LargeFileSearch = LargeFileSearch(),
-        fileUsage: FileUsageMonitor? = nil
+        fileUsage: FileUsageMonitor? = nil,
+        activeProjectWindow: TimeInterval? = nil
     ) {
         self.homeDirectory = homeDirectory.standardizedFileURL
         self.catalog = catalog
@@ -28,6 +32,7 @@ public struct DiskScanner: Sendable {
         self.tools = tools
         self.largeFileSearch = largeFileSearch
         self.fileUsage = fileUsage
+        self.activeProjectWindow = activeProjectWindow
         self.applicationDirectories = applicationDirectories ?? [
             URL(fileURLWithPath: "/Applications"),
             URL(fileURLWithPath: "/Applications/Setapp"),
@@ -102,12 +107,17 @@ public struct DiskScanner: Sendable {
         }
 
         let (measuredItems, measurementIssues) = try await measure(candidates, progress: progress)
-        let fileItems = await markingItemsInUse(measuredItems)
+        progress(.finishing(step: "Checking which projects are active…"))
+        let projects = await summarizeProjects(of: measuredItems, projectRoots: projectRoots)
+        progress(.finishing(step: "Checking which items are in use…"))
+        let fileItems = await markingItemsInUse(markingActiveProjects(measuredItems, projects: projects))
+        progress(.finishing(step: "Waiting for Docker and simulators…"))
         let tool = await toolResult
         try Task.checkCancellation()
         return ScanReport(
             items: (fileItems + tool.items).sorted { $0.sizeInBytes > $1.sizeInBytes },
             issues: located.flatMap(\.issues) + measurementIssues + tool.issues,
+            projects: projects,
             startedAt: startedAt,
             finishedAt: Date()
         )
@@ -122,6 +132,53 @@ public struct DiskScanner: Sendable {
             guard let path = item.fileURL?.path, let processes = inUse[path] else { return item }
             var marked = item
             marked.concerns.append(.inUse(processes: processes))
+            return marked
+        }
+    }
+
+    // MARK: - Projects
+
+    private func summarizeProjects(of items: [CleanupItem], projectRoots: [URL]) async -> [ProjectSummary] {
+        let inspector = ProjectActivityInspector(searchRoots: projectRoots, homeDirectory: homeDirectory)
+        let artifacts = items.filter { $0.rule.group == .projectArtifacts && $0.fileURL != nil }
+        let byRoot = Dictionary(grouping: artifacts) { inspector.projectRoot(for: $0.fileURL!) }
+        let artifactPaths = Set(artifacts.compactMap { $0.fileURL?.standardizedFileURL.path })
+
+        return await withTaskGroup(of: ProjectSummary.self) { group in
+            var pending = byRoot.makeIterator()
+            func addNext() {
+                guard let (root, items) = pending.next() else { return }
+                group.addTask {
+                    ProjectSummary(
+                        root: root,
+                        lastActivity: Task.isCancelled ? nil : inspector.lastActivity(of: root, ignoring: artifactPaths),
+                        itemIDs: items.map(\.id)
+                    )
+                }
+            }
+            for _ in 0..<maximumConcurrentMeasurements { addNext() }
+
+            var projects: [ProjectSummary] = []
+            while let project = await group.next() {
+                projects.append(project)
+                addNext()
+            }
+            return projects.sorted { $0.root.path < $1.root.path }
+        }
+    }
+
+    private func markingActiveProjects(_ items: [CleanupItem], projects: [ProjectSummary]) -> [CleanupItem] {
+        guard let activeProjectWindow else { return items }
+        let cutoff = Date.now.addingTimeInterval(-activeProjectWindow)
+        var activityByItemID: [CleanupItem.ID: Date] = [:]
+        for project in projects {
+            guard let lastActivity = project.lastActivity, lastActivity >= cutoff else { continue }
+            for id in project.itemIDs { activityByItemID[id] = lastActivity }
+        }
+        return items.map { item in
+            guard let lastActivity = activityByItemID[item.id] else { return item }
+            var marked = item
+            marked.concerns.append(.activeProject(lastActivity: lastActivity))
             return marked
         }
     }
@@ -276,6 +333,11 @@ public struct DiskScanner: Sendable {
         return Measured(candidate: candidate, measurement: measurement, lastModified: modified)
     }
 
+    private static func progressName(_ candidate: ScanCandidate) -> String {
+        candidate.displayName
+            ?? "\(candidate.url.deletingLastPathComponent().lastPathComponent)/\(candidate.url.lastPathComponent)"
+    }
+
     /// Large-file bundles are found before their size is known, so the threshold is applied after measuring.
     private func minimumReportedBytes(for rule: CleanupRule) -> Int64 {
         rule.group == .largeFiles ? largeFileSearch.minimumBytes : 1
@@ -287,17 +349,23 @@ public struct DiskScanner: Sendable {
     ) async throws -> ([CleanupItem], [ScanIssue]) {
         try await withThrowingTaskGroup(of: Measured.self) { group in
             var pending = candidates.makeIterator()
-            for _ in 0..<maximumConcurrentMeasurements {
-                guard let next = pending.next() else { break }
+            // In start order, so progress names the item that has been measured the longest.
+            var running: [ScanCandidate] = []
+            func addNext() {
+                guard let next = pending.next() else { return }
+                running.append(next)
                 group.addTask { try Task.checkCancellation(); return Self.measure(next) }
             }
+            for _ in 0..<maximumConcurrentMeasurements { addNext() }
 
             var items: [CleanupItem] = []
             var issues: [ScanIssue] = []
             var completed = 0
             while let measured = try await group.next() {
                 completed += 1
-                progress(.measuring(completed: completed, total: candidates.count))
+                running.removeAll { $0.url == measured.candidate.url }
+                addNext()
+                progress(.measuring(completed: completed, total: candidates.count, current: running.first.map(Self.progressName)))
 
                 let measurement = measured.measurement
                 if measurement.unreadableEntryCount > 0 {
@@ -317,10 +385,6 @@ public struct DiskScanner: Sendable {
                         displayName: measured.candidate.displayName,
                         concerns: measured.candidate.concerns + (measurement.containsPrograms ? [.containsPrograms] : [])
                     ))
-                }
-
-                if let next = pending.next() {
-                    group.addTask { try Task.checkCancellation(); return Self.measure(next) }
                 }
             }
             return (items, issues)

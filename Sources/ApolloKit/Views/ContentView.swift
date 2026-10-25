@@ -3,6 +3,7 @@ import SwiftUI
 
 enum SidebarSelection: Hashable {
     case overview
+    case projects
     case group(RuleGroup)
     case diskMap
     case systemData
@@ -14,8 +15,17 @@ enum SidebarSelection: Hashable {
     /// Tools have their own review-and-remove flow, so the Smart Scan clean bar stays hidden there.
     var showsCleanBar: Bool {
         switch self {
-        case .overview, .group: true
+        case .overview, .projects, .group: true
         case .diskMap, .systemData, .uninstaller, .startupItems, .ports, .history: false
+        }
+    }
+
+    /// A category screen cleans only what it shows; Smart Scan cleans the selection in every category.
+    var cleanScope: RuleGroup? {
+        switch self {
+        case .group(let group): group
+        case .projects: .projectArtifacts
+        default: nil
         }
     }
 }
@@ -37,6 +47,8 @@ struct ContentView: View {
                 switch selection ?? .overview {
                 case .overview:
                     OverviewView(selection: $selection)
+                case .projects:
+                    ProjectsView()
                 case .group(let group):
                     GroupDetailView(group: group)
                 case .diskMap:
@@ -55,7 +67,7 @@ struct ContentView: View {
             }
             .overlay(alignment: .bottom) {
                 if (selection ?? .overview).showsCleanBar {
-                    CleanBar()
+                    CleanBar(scope: (selection ?? .overview).cleanScope)
                 }
             }
             .animation(.smooth, value: model.isBusy)
@@ -109,6 +121,8 @@ struct SidebarView: View {
         List(selection: $selection) {
             Label("Smart Scan", systemImage: "sparkle.magnifyingglass")
                 .tag(SidebarSelection.overview)
+            Label("Projects", systemImage: "hourglass")
+                .tag(SidebarSelection.projects)
 
             Section("Categories") {
                 ForEach(RuleGroup.allCases) { group in
