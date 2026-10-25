@@ -5,6 +5,7 @@ enum SidebarSelection: Hashable {
     case overview
     case group(RuleGroup)
     case diskMap
+    case systemData
     case uninstaller
     case startupItems
     case ports
@@ -14,7 +15,7 @@ enum SidebarSelection: Hashable {
     var showsCleanBar: Bool {
         switch self {
         case .overview, .group: true
-        case .diskMap, .uninstaller, .startupItems, .ports, .history: false
+        case .diskMap, .systemData, .uninstaller, .startupItems, .ports, .history: false
         }
     }
 }
@@ -40,6 +41,8 @@ struct ContentView: View {
                     GroupDetailView(group: group)
                 case .diskMap:
                     DiskMapView()
+                case .systemData:
+                    SystemDataView()
                 case .uninstaller:
                     UninstallerView()
                 case .startupItems:
@@ -128,6 +131,8 @@ struct SidebarView: View {
             Section("Tools") {
                 Label("Disk Map", systemImage: "chart.pie")
                     .tag(SidebarSelection.diskMap)
+                Label("System Data", systemImage: "internaldrive")
+                    .tag(SidebarSelection.systemData)
                 Label("Uninstaller", systemImage: "trash.square")
                     .tag(SidebarSelection.uninstaller)
                 Label("Startup Items", systemImage: "power.circle")

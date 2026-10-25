@@ -33,6 +33,7 @@ final class AppModel {
     let history = HistoryModel()
     let ports = PortsModel()
     let diskMap = DiskMapModel()
+    let systemData = SystemDataModel()
     let notifier = Notifier()
 
     /// A screen the menu bar asked the main window to show; consumed by `ContentView`.
@@ -257,6 +258,12 @@ final class AppModel {
 
     func cancel() {
         activeTask?.cancel()
+    }
+
+    /// Shows a Smart Scan group, scanning first when there are no results to show yet.
+    func reviewInSmartScan(_ group: RuleGroup) {
+        requestedSidebarSelection = .group(group)
+        if report == nil { startScan() }
     }
 
     func revealInFinder(_ urls: [URL]) {

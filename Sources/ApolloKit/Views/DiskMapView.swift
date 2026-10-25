@@ -163,15 +163,23 @@ private struct DiskOverview: View {
 
     var body: some View {
         if let disk = model.diskSpace {
-            StorageBar(
-                segments: [
-                    .init(id: "home", title: "Home folder", bytes: home.bytes, color: .blue),
-                    .init(id: "other", title: "System, apps & other", bytes: max(0, disk.usedBytes - home.bytes), color: .gray),
-                    .init(id: "free", title: "Free", bytes: disk.availableBytes, color: .green.opacity(0.35)),
-                ],
-                totalBytes: disk.totalBytes,
-                height: 10
-            )
+            VStack(alignment: .leading, spacing: 4) {
+                StorageBar(
+                    segments: [
+                        .init(id: "home", title: "Home folder", bytes: home.bytes, color: .blue),
+                        .init(id: "other", title: "System, apps & other", bytes: max(0, disk.usedBytes - home.bytes), color: .gray),
+                        .init(id: "free", title: "Free", bytes: disk.availableBytes, color: .green.opacity(0.35)),
+                    ],
+                    totalBytes: disk.totalBytes,
+                    height: 10
+                )
+                HStack {
+                    Spacer()
+                    Button("What's in System, apps & other?") { model.requestedSidebarSelection = .systemData }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+            }
         }
     }
 }

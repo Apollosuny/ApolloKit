@@ -177,7 +177,7 @@ struct GroupDetailView: View {
 }
 
 /// Inline bar showing an item's size relative to the largest item in view.
-private struct SizeBar: View {
+struct SizeBar: View {
     let fraction: Double
     let tint: Color
 
