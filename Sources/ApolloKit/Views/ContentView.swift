@@ -50,7 +50,7 @@ struct ContentView: View {
                 case .projects:
                     ProjectsView()
                 case .group(let group):
-                    GroupDetailView(group: group)
+                    GroupDetailView(group: group, selection: $selection)
                 case .diskMap:
                     DiskMapView()
                 case .systemData:
@@ -67,7 +67,7 @@ struct ContentView: View {
             }
             .overlay(alignment: .bottom) {
                 if (selection ?? .overview).showsCleanBar {
-                    CleanBar(scope: (selection ?? .overview).cleanScope)
+                    CleanBar(screen: selection ?? .overview)
                 }
             }
             .animation(.smooth, value: model.isBusy)
@@ -94,9 +94,9 @@ struct ContentView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if model.isBusy {
-                    Button("Cancel", systemImage: "stop.circle") { model.cancel() }
+                    Button("Stop", systemImage: "stop.fill") { model.cancel() }
                 } else {
-                    Button("Scan", systemImage: "magnifyingglass") { model.startScan() }
+                    Button(model.report == nil ? "Scan" : "Rescan", systemImage: "arrow.clockwise") { model.startScan() }
                         .help("Scan caches and project build artifacts (⌘R)")
                 }
             }
@@ -119,44 +119,96 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $selection) {
-            Label("Smart Scan", systemImage: "sparkle.magnifyingglass")
-                .tag(SidebarSelection.overview)
-            Label("Projects", systemImage: "hourglass")
-                .tag(SidebarSelection.projects)
-
-            Section("Categories") {
+            Section("Clean") {
+                Label("Smart Scan", systemImage: "sparkle.magnifyingglass")
+                    .badge(badge(model.report == nil ? nil : model.safeBytes))
+                    .tag(SidebarSelection.overview)
                 ForEach(RuleGroup.allCases) { group in
                     HStack(spacing: 8) {
-                        GroupIcon(group: group, size: 20)
+                        GroupIcon(group: group, size: 18)
                         Text(group.title)
                             .lineLimit(1)
-                        Spacer()
-                        if model.report != nil {
-                            Text(model.totalBytes(in: group).fileSize)
-                                .font(.callout)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
                     }
+                    .padding(.leading, 12)
+                    .badge(categoryBadge(group))
                     .tag(SidebarSelection.group(group))
                 }
+                Label("Projects", systemImage: "hourglass")
+                    .badge(badge(model.report == nil ? nil : model.projects.filter(\.isStale).reduce(0) { $0 + $1.totalBytes }))
+                    .tag(SidebarSelection.projects)
             }
 
-            Section("Tools") {
+            Section("Explore") {
                 Label("Disk Map", systemImage: "chart.pie")
                     .tag(SidebarSelection.diskMap)
                 Label("System Data", systemImage: "internaldrive")
+                    .badge(badge(model.systemData.scannedAt == nil ? nil : model.systemData.totalBytes))
                     .tag(SidebarSelection.systemData)
+            }
+
+            Section("Apps") {
                 Label("Uninstaller", systemImage: "trash.square")
                     .tag(SidebarSelection.uninstaller)
                 Label("Startup Items", systemImage: "power.circle")
                     .tag(SidebarSelection.startupItems)
+            }
+
+            Section("Tools") {
                 Label("Ports", systemImage: "network")
+                    .badge(model.ports.developerPorts.count)
                     .tag(SidebarSelection.ports)
                 Label("History", systemImage: "clock.arrow.circlepath")
                     .tag(SidebarSelection.history)
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if let disk = model.diskSpace {
+                SidebarDiskSummary(disk: disk)
+            }
+        }
+    }
+
+    /// Live totals while scanning, results afterwards, "—" for a scanned category with nothing in it.
+    private func categoryBadge(_ group: RuleGroup) -> Text? {
+        if model.isScanning {
+            let bytes = model.liveBytesByGroup[group] ?? 0
+            return bytes > 0 ? Text(bytes.fileSize) : nil
+        }
+        guard model.report != nil else { return nil }
+        let bytes = model.totalBytes(in: group)
+        return Text(bytes > 0 ? bytes.fileSize : "—")
+    }
+
+    private func badge(_ bytes: Int64?) -> Text? {
+        guard let bytes, bytes > 0 else { return nil }
+        return Text(bytes.fileSize)
+    }
+}
+
+private struct SidebarDiskSummary: View {
+    let disk: DiskSpace
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Macintosh HD")
+                Spacer()
+                Text("\(disk.availableBytes.fileSize) available")
+                    .monospacedDigit()
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            DiskUsageBar(
+                segments: [
+                    .init(id: "used", bytes: disk.usedBytes, color: Color(nsColor: .systemGray)),
+                    .init(id: "free", bytes: disk.availableBytes, color: .clear),
+                ],
+                height: 5
+            )
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -165,29 +217,8 @@ struct RiskBadge: View {
 
     var body: some View {
         if risk == .caution {
-            Text("Caution")
-                .font(.caption2.weight(.semibold))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .foregroundStyle(.orange)
-                .background(.orange.opacity(0.15), in: Capsule())
-                .help("Expensive to regenerate or may contain data worth keeping.")
+            SafetyLabel(risk: .caution)
+                .font(.caption)
         }
-    }
-}
-
-/// Why one item is Caution although its rule is Safe: it holds programs, global tools, or is in use.
-struct ConcernBadge: View {
-    let concern: CleanupConcern
-
-    var body: some View {
-        Text(concern.summary)
-            .font(.caption2.weight(.semibold))
-            .lineLimit(1)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .foregroundStyle(.orange)
-            .background(.orange.opacity(0.15), in: Capsule())
-            .help(concern.explanation)
     }
 }

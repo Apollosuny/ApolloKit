@@ -8,7 +8,7 @@ import SwiftUI
 final class AppModel {
     enum Phase: Equatable {
         case idle
-        case scanning(status: String)
+        case scanning(ScanStatus)
         case cleaning(completed: Int, total: Int)
     }
 
@@ -23,10 +23,11 @@ final class AppModel {
     private(set) var diskSpace = DiskSpace.current()
     /// Reclaimable bytes found so far, streamed while a scan runs.
     private(set) var liveBytesByGroup: [RuleGroup: Int64] = [:]
-    /// Determinate progress once the scan is measuring; `nil` while it is still locating items.
-    private(set) var scanFraction: Double?
+    /// Progress the scan has proven, plus how far it may drift until the next update; see `ScanEstimate`.
+    private(set) var scanEstimate = ScanEstimate()
     private(set) var cleaningItemName: String?
-    @ObservationIgnored private var finishingStepCount = 0
+    /// The running cleanup, kept until the next one so the completion screen can compare before and after.
+    private(set) var cleaning: CleaningState?
 
     let preferences = Preferences()
     let uninstaller = UninstallerModel()
@@ -53,6 +54,16 @@ final class AppModel {
     private let homeDirectory = FileManager.default.homeDirectoryForCurrentUser
 
     var isBusy: Bool { phase != .idle }
+
+    var isScanning: Bool {
+        if case .scanning = phase { return true }
+        return false
+    }
+
+    var scanStatus: ScanStatus? {
+        if case .scanning(let status) = phase { return status }
+        return nil
+    }
 
     init() {
         hidesWindowAtLaunch = preferences.startsInMenuBar && preferences.showsMenuBarExtra
@@ -116,9 +127,7 @@ final class AppModel {
 
     private func postLowSpaceAlert() {
         guard let available = diskSpace?.availableBytes else { return }
-        let reclaimable = report.map { report in
-            report.items.filter { $0.risk == .safe }.reduce(0) { $0 + $1.sizeInBytes }
-        }
+        let reclaimable = report.map { _ in safeBytes }
         let notifier = notifier
         Task { await notifier.postLowSpace(availableBytes: available, reclaimableBytes: reclaimable) }
     }
@@ -144,6 +153,15 @@ final class AppModel {
 
     var selectedBytes: Int64 {
         selectedItems.reduce(0) { $0 + $1.sizeInBytes }
+    }
+
+    /// What can go without a second thought: the items selected for the user after a scan.
+    var safeBytes: Int64 {
+        report?.items.filter { $0.risk == .safe }.reduce(0) { $0 + $1.sizeInBytes } ?? 0
+    }
+
+    var cautionBytes: Int64 {
+        report?.items.filter { $0.risk == .caution }.reduce(0) { $0 + $1.sizeInBytes } ?? 0
     }
 
     var liveTotalBytes: Int64 {
@@ -204,12 +222,11 @@ final class AppModel {
     func startScan(inBackground: Bool = false) {
         guard !isBusy else { return }
         isBackgroundScan = inBackground
-        phase = .scanning(status: "Preparing…")
+        phase = .scanning(ScanStatus(stage: .locating))
         lastOutcome = nil
         showsCompletion = false
         liveBytesByGroup = [:]
-        scanFraction = nil
-        finishingStepCount = 0
+        scanEstimate = ScanEstimate(fraction: 0, ceiling: Self.locatingShare)
 
         let scanner = DiskScanner(
             homeDirectory: homeDirectory,
@@ -251,11 +268,16 @@ final class AppModel {
     /// Cleans the selection in one category, leaving other categories' selection for later, or everything when `group` is `nil`.
     func clean(mode: DeletionMode, in group: RuleGroup? = nil) {
         guard !isBusy else { return }
-        let items = selectedItems(in: group)
+        // Category by category, so the cleaning screen can tick off whole categories as it goes.
+        let groupOrder = Dictionary(uniqueKeysWithValues: RuleGroup.allCases.enumerated().map { ($1, $0) })
+        let items = selectedItems(in: group).enumerated()
+            .sorted { (groupOrder[$0.element.rule.group]!, $0.offset) < (groupOrder[$1.element.rule.group]!, $1.offset) }
+            .map(\.element)
         guard !items.isEmpty else { return }
 
         let cleaner = Cleaner(policy: safetyPolicy, fileUsage: FileUsageMonitor())
         phase = .cleaning(completed: 0, total: items.count)
+        cleaning = CleaningState(items: items, mode: mode, diskSpaceBefore: diskSpace)
         cleaningItemName = items.first?.displayName
         let itemNames = items.map(\.displayName)
 
@@ -264,6 +286,7 @@ final class AppModel {
                 Task { @MainActor in
                     guard let self, case .cleaning = self.phase else { return }
                     self.phase = .cleaning(completed: completed, total: total)
+                    self.cleaning?.completed = completed
                     self.cleaningItemName = completed < itemNames.count ? itemNames[completed] : nil
                 }
             }
@@ -322,30 +345,110 @@ final class AppModel {
         }
     }
 
-    private static let measuringShare = 0.9
+    /// Shares of the progress ring: locating, then measuring, then the checks after it.
+    private static let locatingShare = 0.1
+    private static let measuringShare = 0.8
 
     private func apply(_ progress: ScanProgress) {
         // Progress hops can arrive after the scan finished; never resurrect the scanning state.
-        guard case .scanning = phase else { return }
+        guard case .scanning(var status) = phase else { return }
         switch progress {
         case .locating(let ruleTitle):
-            phase = .scanning(status: "Checking \(ruleTitle)…")
-        case .walking(let directory, let visited):
-            phase = .scanning(status: "Walking projects (\(visited.formatted()) folders) · \(directory)")
+            guard status.stage == .locating else { return }
+            status.currentItem = ruleTitle
+        case .walking(let directory, _):
+            guard status.stage == .locating else { return }
+            status.currentItem = directory
         case .measuring(let completed, let total, let current):
             // Progress hops are separate tasks, so a late measuring update must not rewind the checks after it.
-            guard finishingStepCount == 0 else { return }
-            phase = .scanning(status: "Measuring \(completed) of \(total) items" + (current.map { " · \($0)" } ?? "…"))
-            // Measuring fills most of the ring; the checks after it fill the rest.
-            scanFraction = total > 0 ? Self.measuringShare * Double(completed) / Double(total) : nil
+            guard status.stage == .locating || status.stage == .measuring, total > 0 else { return }
+            if status.stage != .measuring {
+                status.stage = .measuring
+                status.stageStartedAt = .now
+            }
+            status.completed = completed
+            status.total = total
+            status.currentItem = current ?? status.currentItem
+            let perItem = Self.measuringShare / Double(total)
+            let base = Self.locatingShare
+            scanEstimate = scanEstimate.advanced(to: base + perItem * Double(completed), ceiling: base + perItem * Double(min(total, completed + 1)))
         case .finishing(let step):
-            finishingStepCount += 1
-            phase = .scanning(status: step)
-            // Each check closes half the remaining gap, so the ring keeps moving without knowing how many follow.
-            scanFraction = 1 - (1 - Self.measuringShare) * pow(0.5, Double(finishingStepCount))
+            status.stage = .finishing(step)
+            status.stageStartedAt = .now
+            status.currentItem = nil
+            // Each check closes half the remaining gap, so the ring keeps moving without knowing how long a check takes.
+            let checksShare = 1 - Self.locatingShare - Self.measuringShare
+            let start = 1 - checksShare * pow(0.5, Double(step.rawValue))
+            scanEstimate = scanEstimate.advanced(to: start, ceiling: 1 - checksShare * pow(0.5, Double(step.rawValue + 1)))
         case .discovered(let group, let bytes):
             liveBytesByGroup[group, default: 0] += bytes
+            return
         }
+        phase = .scanning(status)
+    }
+}
+
+/// What a running scan is doing, for the scanning screen and the menu bar.
+struct ScanStatus: Equatable {
+    enum Stage: Equatable {
+        case locating
+        case measuring
+        case finishing(FinishingStep)
+    }
+
+    var stage: Stage
+    var stageStartedAt = Date.now
+    /// Rule, folder or item the scan is busy with, when it reports one.
+    var currentItem: String?
+    var completed = 0
+    var total = 0
+}
+
+/// Scan progress that never looks stalled: the view eases from `fraction` toward `ceiling`,
+/// which the scan cannot pass before its next update.
+struct ScanEstimate: Equatable {
+    var fraction = 0.0
+    var ceiling = 0.0
+    var updatedAt = Date.now
+
+    /// Covers most of the gap to the ceiling within a few seconds, then slows down without ever reaching it.
+    func displayed(at date: Date) -> Double {
+        let elapsed = max(0, date.timeIntervalSince(updatedAt))
+        return fraction + (ceiling - fraction) * (1 - exp(-elapsed / 3))
+    }
+
+    /// Starts easing from what is on screen now, so an update that proves less than was shown never moves the ring back.
+    func advanced(to fraction: Double, ceiling: Double, at date: Date = .now) -> ScanEstimate {
+        let shown = displayed(at: date)
+        return ScanEstimate(fraction: max(fraction, shown), ceiling: max(ceiling, shown), updatedAt: date)
+    }
+}
+
+struct CleaningState {
+    let items: [CleanupItem]
+    let mode: DeletionMode
+    let diskSpaceBefore: DiskSpace?
+    var completed = 0
+
+    var totalBytes: Int64 { items.reduce(0) { $0 + $1.sizeInBytes } }
+    /// Sizes of the items handled so far; items that fail are only known once the cleanup ends.
+    var processedBytes: Int64 { items.prefix(completed).reduce(0) { $0 + $1.sizeInBytes } }
+
+    var groups: [RuleGroup] {
+        RuleGroup.allCases.filter { group in items.contains { $0.rule.group == group } }
+    }
+
+    func bytes(in group: RuleGroup) -> Int64 {
+        items.filter { $0.rule.group == group }.reduce(0) { $0 + $1.sizeInBytes }
+    }
+
+    enum GroupProgress { case pending, running, done }
+
+    func progress(of group: RuleGroup) -> GroupProgress {
+        let indices = items.indices.filter { items[$0].rule.group == group }
+        guard let last = indices.last, let first = indices.first else { return .pending }
+        if completed > last { return .done }
+        return completed >= first ? .running : .pending
     }
 }
 

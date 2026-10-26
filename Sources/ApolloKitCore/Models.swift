@@ -350,10 +350,17 @@ public enum ScanProgress: Sendable, Equatable {
     case walking(directory: String, visited: Int)
     /// `current` names an item still being measured, so a few large folders finishing last don't look like a stall.
     case measuring(completed: Int, total: Int, current: String?)
-    /// Checks that run after every item is measured, before results are shown.
-    case finishing(step: String)
+    /// Checks that run after every item is measured, before results are shown, in this order.
+    case finishing(FinishingStep)
     /// Emitted once per reported item so the UI can show reclaimable space while the scan runs.
     case discovered(group: RuleGroup, bytes: Int64)
+}
+
+public enum FinishingStep: Int, Sendable, CaseIterable {
+    case checkingProjects
+    case checkingFilesInUse
+    /// Docker and simulator sizes come from their own tools, which may still be starting.
+    case waitingForTools
 }
 
 enum FileErrorClassifier {

@@ -12,6 +12,7 @@ struct ApolloKitApp: App {
         Window("ApolloKit", id: Self.mainWindowID) {
             ContentView()
                 .environment(model)
+                .tint(.brandOrange)
         }
         .commands {
             CommandGroup(after: .newItem) {
@@ -24,6 +25,7 @@ struct ApolloKitApp: App {
         Settings {
             SettingsView()
                 .environment(model)
+                .tint(.brandOrange)
         }
 
         MenuBarExtra(isInserted: Binding(
@@ -32,6 +34,7 @@ struct ApolloKitApp: App {
         )) {
             MenuBarPanel()
                 .environment(model)
+                .tint(.brandOrange)
         } label: {
             MenuBarLabel()
                 .environment(model)

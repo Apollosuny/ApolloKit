@@ -114,11 +114,11 @@ public struct DiskScanner: Sendable {
         }
 
         let (measuredItems, measurementIssues) = try await measure(candidates, progress: progress)
-        progress(.finishing(step: "Checking which projects are active…"))
+        progress(.finishing(.checkingProjects))
         let projects = await summarizeProjects(of: measuredItems, projectRoots: projectRoots)
-        progress(.finishing(step: "Checking which items are in use…"))
+        progress(.finishing(.checkingFilesInUse))
         let fileItems = await markingItemsInUse(markingActiveProjects(measuredItems, projects: projects))
-        progress(.finishing(step: "Waiting for Docker and simulators…"))
+        progress(.finishing(.waitingForTools))
         let tool = await toolResult
         try Task.checkCancellation()
         return ScanReport(

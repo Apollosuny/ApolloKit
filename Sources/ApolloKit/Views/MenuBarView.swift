@@ -31,7 +31,7 @@ struct MenuBarLabel: View {
     private var text: String? {
         switch model.phase {
         case .scanning:
-            return model.scanFraction.map { "\(Int($0 * 100))%" } ?? "Scanning"
+            return "\(Int(model.scanEstimate.fraction * 100))%"
         case .cleaning(let completed, let total):
             return "\(completed)/\(total)"
         case .idle:
@@ -88,48 +88,52 @@ struct MenuBarPanel: View {
     private func diskSection(_ disk: DiskSpace) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text("\(disk.availableBytes.fileSize) free")
-                    .font(.headline)
-                    .monospacedDigit()
-                    .foregroundStyle(model.isDiskSpaceLow ? Color.orange : .primary)
-                Spacer()
-                Text("of \(disk.totalBytes.fileSize)")
-                    .font(.caption)
+                Text("Macintosh HD")
                     .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(disk.availableBytes.fileSize) available")
+                    .monospacedDigit()
+                    .foregroundStyle(model.isDiskSpaceLow ? Color.accentText : .primary)
             }
-            ProgressView(value: disk.usedFraction)
-                .tint(model.isDiskSpaceLow ? .orange : .accentColor)
+            .font(.caption)
+            DiskUsageBar(
+                segments: [
+                    .init(id: "used", bytes: disk.usedBytes, color: model.isDiskSpaceLow ? .accentColor : .usedSpace),
+                    .init(id: "available", bytes: disk.availableBytes, color: .clear),
+                ],
+                height: 6
+            )
         }
     }
 
     @ViewBuilder
     private var findingsSection: some View {
         switch model.phase {
-        case .scanning(let status):
+        case .scanning:
             VStack(alignment: .leading, spacing: 6) {
                 Text("\(model.liveTotalBytes.fileSize) found so far")
-                    .font(.headline)
+                    .font(.system(size: 17, weight: .semibold))
                     .monospacedDigit()
                     .contentTransition(.numericText())
                     .animation(.snappy, value: model.liveTotalBytes)
-                if let fraction = model.scanFraction {
-                    ProgressView(value: fraction)
-                } else {
-                    ProgressView().progressViewStyle(.linear)
+                TimelineView(.animation(minimumInterval: 0.25)) { context in
+                    ProgressView(value: model.scanEstimate.displayed(at: context.date))
                 }
-                Text(status)
-                    .font(.caption)
+                Text(model.scanStatus?.currentItem ?? "Scanning…")
+                    .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
         case .cleaning(let completed, let total):
             VStack(alignment: .leading, spacing: 6) {
-                Text("Cleaning \(completed) of \(total)…").font(.headline)
+                Text("Cleaning \(min(completed + 1, total)) of \(total)…")
+                    .font(.system(size: 17, weight: .semibold))
+                    .monospacedDigit()
                 ProgressView(value: Double(completed), total: Double(max(total, 1)))
                 if let name = model.cleaningItemName {
                     Text(name)
-                        .font(.caption)
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -140,7 +144,7 @@ struct MenuBarPanel: View {
                 reportSummary(report)
             } else {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Not scanned yet").font(.headline)
+                    Text("Not scanned yet").font(.system(size: 17, weight: .semibold))
                     Text("Scan to find caches and build artifacts.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -154,13 +158,9 @@ struct MenuBarPanel: View {
         let otherBytes = groups.dropFirst(topGroupCount).reduce(0) { $0 + model.totalBytes(in: $1) }
 
         return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(report.totalBytes.fileSize)
-                    .font(.title2.weight(.semibold))
-                    .monospacedDigit()
-                Text("reclaimable")
-                    .foregroundStyle(.secondary)
-            }
+            Text("\(model.safeBytes.fileSize) can be freed")
+                .font(.system(size: 17, weight: .semibold))
+                .monospacedDigit()
 
             VStack(spacing: 5) {
                 ForEach(groups.prefix(topGroupCount)) { group in
@@ -217,16 +217,16 @@ struct MenuBarPanel: View {
                 }
                 .prominentActionStyle()
             } else {
+                Button { showMainWindow() } label: {
+                    Text("Review…").frame(maxWidth: .infinity)
+                }
+                .secondaryActionStyle()
+                .disabled(model.report?.items.isEmpty ?? true)
+
                 Button { model.startScan() } label: {
                     Text("Scan Again").frame(maxWidth: .infinity)
                 }
-                .secondaryActionStyle()
-
-                Button { showMainWindow() } label: {
-                    Text("Review & Clean").frame(maxWidth: .infinity)
-                }
                 .prominentActionStyle()
-                .disabled(model.report?.items.isEmpty ?? true)
             }
         }
         .controlSize(.large)
@@ -236,7 +236,7 @@ struct MenuBarPanel: View {
         let ports = model.ports.developerPorts
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Ports in Use").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                Text("Listening Ports").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                 Spacer()
                 Button(ports.count > maxPortRows ? "All \(ports.count)" : "Manage") {
                     model.requestedSidebarSelection = .ports
@@ -256,6 +256,7 @@ struct MenuBarPanel: View {
     private var footer: some View {
         HStack(spacing: 12) {
             Button("Open ApolloKit") { showMainWindow() }
+                .keyboardShortcut("o")
             Spacer()
             Button {
                 AppActivation.bringToFront()
