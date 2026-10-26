@@ -105,6 +105,13 @@ public struct DiskScanner: Sendable {
         for candidate in located.flatMap(\.candidates) where seenPaths.insert(candidate.url.standardizedFileURL.path).inserted {
             candidates.append(candidate)
         }
+        let subsumingPaths = candidates.filter(\.subsumesNestedCandidates).map { $0.url.standardizedFileURL.path + "/" }
+        if !subsumingPaths.isEmpty {
+            candidates.removeAll { candidate in
+                let path = candidate.url.standardizedFileURL.path
+                return subsumingPaths.contains { path.hasPrefix($0) }
+            }
+        }
 
         let (measuredItems, measurementIssues) = try await measure(candidates, progress: progress)
         progress(.finishing(step: "Checking which projects are active…"))
@@ -266,12 +273,33 @@ public struct DiskScanner: Sendable {
                         rule: rule,
                         displayName: "\(appName) (not installed) › \(url.lastPathComponent)"
                     ))
+                case .removedAppData:
+                    let finder = AppLeftoverFinder(
+                        homeDirectory: homeDirectory,
+                        installedApps: AppUninstaller(homeDirectory: homeDirectory, applicationDirectories: applicationDirectories).installedApps()
+                    )
+                    for url in finder.find() {
+                        result.candidates.append(ScanCandidate(
+                            url: url,
+                            rule: rule,
+                            displayName: Self.libraryDisplayName(forPath: url.path, homeDirectory: homeDirectory),
+                            minimumBytes: AppLeftoverFinder.minimumBytes,
+                            subsumesNestedCandidates: true
+                        ))
+                    }
                 case .projectArtifact, .tool, .largeFile:
                     continue
                 }
             }
         }
         return result
+    }
+
+    /// `~/Library/Containers/com.example.app` → `Containers › com.example.app`
+    static func libraryDisplayName(forPath path: String, homeDirectory: URL) -> String {
+        let relative = path.hasPrefix(homeDirectory.path + "/") ? String(path.dropFirst(homeDirectory.path.count + 1)) : path
+        let trimmed = relative.hasPrefix("Library/") ? String(relative.dropFirst("Library/".count)) : relative
+        return trimmed.split(separator: "/").joined(separator: " › ")
     }
 
     private static let displayPrefixesToDrop = ["Library/Application Support/", "Library/Caches/", "Library/Developer/", "Library/"]
@@ -375,7 +403,7 @@ public struct DiskScanner: Sendable {
                         isPermissionDenied: true
                     ))
                 }
-                if measurement.allocatedBytes >= minimumReportedBytes(for: measured.candidate.rule) {
+                if measurement.allocatedBytes >= max(minimumReportedBytes(for: measured.candidate.rule), measured.candidate.minimumBytes) {
                     progress(.discovered(group: measured.candidate.rule.group, bytes: measurement.allocatedBytes))
                     items.append(CleanupItem(
                         url: measured.candidate.url,

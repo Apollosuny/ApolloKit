@@ -5,6 +5,9 @@ struct ScanCandidate: Sendable {
     let rule: CleanupRule
     var displayName: String? = nil
     var concerns: [CleanupConcern] = []
+    var minimumBytes: Int64 = 1
+    /// The whole folder is removed, so items other rules found inside it are dropped rather than counted twice.
+    var subsumesNestedCandidates = false
 }
 
 struct LocateResult: Sendable {

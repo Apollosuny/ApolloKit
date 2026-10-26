@@ -54,6 +54,7 @@ One click measures **80+ developer-aware locations** across nine categories:
 - Only Safe items are pre-selected.
 - Filter by "not used in 30 days" or "not used in 6 months".
 - Clean Up on a category screen cleans only that category; the Smart Scan screen cleans everything you selected.
+- **Leftovers of removed apps:** dragging an app to the Trash leaves its data behind (often gigabytes for Electron apps such as Cursor or Slack). ApolloKit finds Library folders named after a bundle ID no installed app uses, and Electron app folders whose app is gone. Anything an installed app could own (`ZaloData` for Zalo, another app of the same vendor), anything of Apple's, and anything written in the last 30 days is left out.
 
 ### Projects
 Every project in your project folders that has build artifacts, with how long since you last changed it.

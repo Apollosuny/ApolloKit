@@ -109,6 +109,8 @@ public enum RuleLocator: Sendable, Hashable {
     case toolchainVersions(ToolchainManager)
     /// Data left behind by an app; only reported when none of the app bundles is installed.
     case leftover(homeRelativePath: String, appBundleNames: [String])
+    /// Library data of any app that is no longer installed, recognised by its bundle identifier or Electron profile.
+    case removedAppData
     /// Items discovered and removed through an external tool (simctl, docker).
     case tool(ToolSource)
     /// Files at or above the large-file threshold in the user's document folders, matched by
@@ -129,7 +131,7 @@ public enum RuleLocator: Sendable, Hashable {
     var homeRelativePath: String? {
         switch self {
         case .directory(let path), .childrenOf(let path, _), .leftover(let path, _): path
-        case .eachChild, .toolchainVersions, .projectArtifact, .tool, .largeFile: nil
+        case .eachChild, .toolchainVersions, .projectArtifact, .tool, .largeFile, .removedAppData: nil
         }
     }
 

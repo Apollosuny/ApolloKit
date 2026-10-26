@@ -87,9 +87,10 @@ public enum RuleCatalog {
         ),
         CleanupRule(
             id: "apps.leftovers", title: "Leftovers of Removed Apps",
-            detail: "Data of developer apps that are no longer installed (OrbStack, Docker Desktop, Android Studio).",
+            detail: "Library data of apps that are no longer installed, untouched for 30 days. Settings, history and sign-ins are lost if you install the app again.",
             group: .apps, risk: .caution,
             locators: [
+                .removedAppData,
                 .leftover(homeRelativePath: "Library/Group Containers/HUAQ24HBR6.dev.orbstack", appBundleNames: ["OrbStack.app"]),
                 .leftover(homeRelativePath: ".orbstack", appBundleNames: ["OrbStack.app"]),
                 .leftover(homeRelativePath: "Library/Containers/com.docker.docker", appBundleNames: ["Docker.app"]),
